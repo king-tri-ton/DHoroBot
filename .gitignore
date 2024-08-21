@@ -8,3 +8,4 @@ __pycache__/
 *.lnk
 *.status
 .env
+config.py
