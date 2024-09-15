@@ -35,7 +35,7 @@ def send_welcome(message):
             col2.append(sign)
     markup.add(*col1)
     markup.add(*col2)
-    wlcmmsg = '<b>👋 Привет ' + message.from_user.first_name + '</b>\n\n' + getHoroTodayAll() + '\n⚛️ Выберите Ваш знак зодиака'
+    wlcmmsg = '<b>👋 Привет ' + message.from_user.first_name + '</b>\n\n' + getHoroTodayAll() + '\n\n⚛️ Выберите Ваш знак зодиака'
     bot.send_message(message.from_user.id, text=wlcmmsg, reply_markup=markup, parse_mode="html", disable_web_page_preview=True)
     tgidregister(message.from_user.id)
 

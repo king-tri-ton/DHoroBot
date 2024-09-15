@@ -9,4 +9,5 @@ __pycache__/
 *.status
 .env
 config.py
+send.py
 .config.py
