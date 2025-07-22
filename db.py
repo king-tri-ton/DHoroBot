@@ -25,7 +25,7 @@ def tgidregister(tid):
     except Exception as e:
         print(e)
 
-def countusers():
+def countusers(): # для админа
     try:
         cur = conn.cursor()
         cur.execute("SELECT COUNT(*) FROM users;")
@@ -34,7 +34,7 @@ def countusers():
     except Exception as e:
         print(e)
 
-def getusers():
+def getusers(): # для админа
     try:
         cur = conn.cursor()
         cur.execute("SELECT * FROM users;")
