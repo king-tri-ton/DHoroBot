@@ -21,7 +21,6 @@ def getHoro(char, date):
 	url = requests.get('https://horo.mail.ru/prediction/' + char + '/' + date + '/', headers=headers)
 	s = BeautifulSoup(url.text, 'html.parser')
 	title = s.find("h1", {"data-qa": "Title"}).getText()
-	# date = s.find("span", {"data-qa": "Text"}).getText()
 	text = s.find("main", {"data-qa": "ArticleLayout"})
 	text = re.sub(r'<a(.*?)</a>', '', str(text))
 	text = remove_tags(text)
