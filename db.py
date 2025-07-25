@@ -11,6 +11,19 @@ def init_db():
                 tgid INTEGER UNIQUE
             );
         """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            );
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS groups (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER UNIQUE,
+                chat_type TEXT
+            );
+        """)
         conn.commit()
     except Exception as e:
         print(e)
@@ -42,3 +55,38 @@ def getusers(): # для админа
         return getuser
     except Exception as e:
         print(e)
+
+def set_chat_link(link):
+    try:
+        cur = conn.cursor()
+        cur.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('chat_link', ?);", (link,))
+        conn.commit()
+    except Exception as e:
+        print(e)
+
+def get_chat_link():
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT value FROM settings WHERE key = 'chat_link';")
+        row = cur.fetchone()
+        return row[0] if row else None
+    except Exception as e:
+        print(e)
+        return None
+
+def register_group(chat_id, chat_type):
+    try:
+        cur = conn.cursor()
+        cur.execute("INSERT OR IGNORE INTO groups (chat_id, chat_type) VALUES (?, ?);", (chat_id, chat_type))
+        conn.commit()
+    except Exception as e:
+        print(e)
+
+def countgroups():
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM groups;")
+        return str(cur.fetchone()[0])
+    except Exception as e:
+        print(e)
+        return "0"

@@ -8,7 +8,6 @@ import telebot
 
 bot = telebot.TeleBot(TOKEN)
 
-# Соответствие знаков
 zodiac_signs = {
     '♈️ Овен': 'aries',
     '♉ Телец': 'taurus',
@@ -24,7 +23,6 @@ zodiac_signs = {
     '♓ Рыбы': 'pisces'
 }
 
-# Соответствие периодов
 period_map = {
     'вчера': 'yesterday',
     'сегодня': 'today',
@@ -45,6 +43,7 @@ def get_zodiac_from_text(text):
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
+    print(message)
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=False)
     col1, col2 = [], []
     for sign in zodiac_signs:
@@ -60,20 +59,31 @@ def send_welcome(message):
 
 @bot.message_handler(commands=['chat'])
 def send_chat(message):
-    chatmsg = '<b> [Чат] ⚛️ Гороскоп на Сегодня</b>\n\n👉 <a href="https://t.me/+I7-8qO-hf-UyMzE6">Нажми чтобы присоединиться</a>'
-    bot.send_message(message.from_user.id, text=chatmsg, parse_mode="html", disable_web_page_preview=True)
-
-@bot.message_handler(commands=['all'])
-def send_all(message):
-    if message.chat.id == ADMIN:
-        wlcmmsg = '<b>👋 Всем привет</b>\n\n' + getHoroTodayAll()
-        bot.send_message(GROUP, text=wlcmmsg, parse_mode="html", disable_web_page_preview=True)
+    if message.chat.id == ADMIN and len(message.text.split()) > 1:
+        new_link = message.text.split(' ', 1)[1].strip()
+        set_chat_link(new_link)
+        bot.send_message(ADMIN, "✅ Ссылка на чат обновлена.")
+    else:
+        chat_link = get_chat_link()
+        if chat_link:
+            chatmsg = f'<b> [Чат] ⚛️ Гороскоп на Сегодня</b>\n\n👉 <a href="{chat_link}">Нажми чтобы присоединиться</a>'
+        else:
+            chatmsg = "🔗 Ссылка на чат не задана."
+        bot.send_message(message.chat.id, text=chatmsg, parse_mode="html", disable_web_page_preview=True)
 
 @bot.message_handler(commands=['stat'])
 def send_stat(message):
     if message.chat.id == ADMIN:
-        stat = f'<b>📊 Статистика использования.</b>\n\n🔄 Количество пользователей: {countusers()}'
+        stat = f'<b>📊 Статистика использования.</b>\n\n🔄 Количество пользователей: {countusers()}\n👥 Групп/чатов/форумов: {countgroups()}'
         bot.send_message(ADMIN, text=stat, parse_mode="html")
+
+@bot.my_chat_member_handler()
+def handle_chat_join(event):
+    chat = event.chat
+    new_status = event.new_chat_member.status
+
+    if new_status in ['member', 'administrator']:
+        register_group(chat.id, chat.type)
 
 @bot.message_handler(content_types=['text'])
 def process_step(message):
@@ -83,10 +93,7 @@ def process_step(message):
         bot_username = bot.get_me().username.lower()
 
         if f"@{bot_username}" in text:
-            # Удаляем упоминание бота
             text = text.replace(f"@{bot_username}", "").strip()
-
-            # Если ничего не написали после упоминания
             if not text:
                 bot.reply_to(message, "Чтобы узнать гороскоп, напиши:\n\n@DHoroBot Рак сегодня\n@DHoroBot Лев завтра\n\nПериод можно не указывать, по умолчанию будет 'сегодня'.")
                 return
@@ -94,7 +101,7 @@ def process_step(message):
             found_sign = get_zodiac_from_text(text)
 
             if found_sign:
-                found_period = 'сегодня'  # по умолчанию сегодня
+                found_period = 'сегодня'
                 for period in period_map:
                     if period in text:
                         found_period = period
@@ -106,7 +113,6 @@ def process_step(message):
                 bot.reply_to(message, "Пример:\n@DHoroBot Рак сегодня")
             return
 
-    # Личные сообщения как раньше
     sign = zodiac_signs.get(message.text)
     if sign:
         keyboard = types.InlineKeyboardMarkup()
