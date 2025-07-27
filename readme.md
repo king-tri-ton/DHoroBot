@@ -49,7 +49,7 @@
 
 1. Клонируйте репозиторий и перейдите в каталог проекта:
    ```bash
-   git clone https://github.com/your_username/DHoroBot.git
+   git https://github.com/king-tri-ton/DHoroBot
    cd DHoroBot
    ```
 
