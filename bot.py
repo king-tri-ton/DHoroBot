@@ -43,7 +43,10 @@ def get_zodiac_from_text(text):
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    print(message)
+    args = message.text.split()
+    zodiac_arg = args[1] if len(args) > 1 else None
+
+    # Создание клавиатуры
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=False)
     col1, col2 = [], []
     for sign in zodiac_signs:
@@ -53,9 +56,28 @@ def send_welcome(message):
             col2.append(sign)
     markup.add(*col1)
     markup.add(*col2)
-    wlcmmsg = '<b>👋 Привет ' + message.from_user.first_name + '</b>\n\n' + getHoroTodayAll() + '\n\n⚛️ Выберите Ваш знак зодиака'
-    bot.send_message(message.from_user.id, text=wlcmmsg, reply_markup=markup, parse_mode="html", disable_web_page_preview=True)
+
+    # Приветствие
+    wlcmmsg = f'<b>👋 Привет {message.from_user.first_name}</b>\n\n'
+
+    # Если передан знак зодиака — показать только гороскоп
+    if zodiac_arg and zodiac_arg in zodiac_signs.values():
+        wlcmmsg += getHoro(zodiac_arg, 'today')
+    else:
+        # Общая сводка + предложение выбрать знак
+        wlcmmsg += getHoroTodayAll() + '\n\n⚛️ Выберите Ваш знак зодиака'
+
+    bot.send_message(
+        message.from_user.id,
+        text=wlcmmsg,
+        reply_markup=markup,
+        parse_mode="html",
+        disable_web_page_preview=True
+    )
+
+    # Регистрация
     tgidregister(message.from_user.id)
+
 
 @bot.message_handler(commands=['chat'])
 def send_chat(message):
