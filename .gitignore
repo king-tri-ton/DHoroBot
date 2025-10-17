@@ -2,13 +2,8 @@
 /dist/
 /venv/
 /img/
+/backups/
 __pycache__/
-*.spec
 *.log
 *.db
-*.lnk
-*.status
 .env
-config.py
-send.py
-.config.py

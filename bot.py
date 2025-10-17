@@ -1,10 +1,16 @@
 # coding: utf8
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from telebot import types
-from config import *
+from dotenv import load_dotenv
 from parser import *
 from db import *
 import telebot
+import os
+
+load_dotenv()
+
+TOKEN = os.getenv("TOKEN")
+ADMIN = int(os.getenv("ADMIN", "0"))
 
 bot = telebot.TeleBot(TOKEN)
 
@@ -64,7 +70,6 @@ def send_welcome(message):
     if zodiac_arg and zodiac_arg in zodiac_signs.values():
         wlcmmsg += getHoro(zodiac_arg, 'today')
     else:
-        # Общая сводка + предложение выбрать знак
         wlcmmsg += getHoroTodayAll() + '\n\n⚛️ Выберите Ваш знак зодиака'
 
     bot.send_message(
@@ -75,9 +80,16 @@ def send_welcome(message):
         disable_web_page_preview=True
     )
 
-    # Регистрация
+    # Регистрация пользователя
     tgidregister(message.from_user.id)
 
+    # Сохранение имени в базу
+    try:
+        cur = conn.cursor()
+        cur.execute("UPDATE users SET name = ? WHERE tgid = ?;", (message.from_user.first_name, message.from_user.id))
+        conn.commit()
+    except Exception as e:
+        print(e)
 
 @bot.message_handler(commands=['chat'])
 def send_chat(message):

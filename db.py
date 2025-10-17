@@ -5,6 +5,7 @@ conn = sqlite3.connect('horo.db', check_same_thread=False)
 def init_db():
     try:
         cur = conn.cursor()
+
         cur.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -24,6 +25,15 @@ def init_db():
                 chat_type TEXT
             );
         """)
+
+        cur.execute("PRAGMA table_info(users);")
+        columns = [col[1] for col in cur.fetchall()]
+
+        if 'name' not in columns:
+            cur.execute("ALTER TABLE users ADD COLUMN name TEXT;")
+        if 'birthdate' not in columns:
+            cur.execute("ALTER TABLE users ADD COLUMN birthdate TEXT;")
+
         conn.commit()
     except Exception as e:
         print(e)
