@@ -1,7 +1,8 @@
 # coding: utf8
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
-from telebot import types
+from regular import is_valid_birthdate
 from dotenv import load_dotenv
+from telebot import types
 from parser import *
 from db import *
 import telebot
@@ -80,16 +81,7 @@ def send_welcome(message):
         disable_web_page_preview=True
     )
 
-    # Регистрация пользователя
-    tgidregister(message.from_user.id)
-
-    # Сохранение имени в базу
-    try:
-        cur = conn.cursor()
-        cur.execute("UPDATE users SET name = ? WHERE tgid = ?;", (message.from_user.first_name, message.from_user.id))
-        conn.commit()
-    except Exception as e:
-        print(e)
+    tgidregister(message.from_user.id, message.from_user.first_name)
 
 @bot.message_handler(commands=['chat'])
 def send_chat(message):
@@ -111,13 +103,92 @@ def send_stat(message):
         stat = f'<b>📊 Статистика использования.</b>\n\n🔄 Количество пользователей: {countusers()}\n👥 Групп/чатов/форумов: {countgroups()}'
         bot.send_message(ADMIN, text=stat, parse_mode="html")
 
+@bot.message_handler(commands=['name'])
+def edit_name(message):
+    msg = bot.send_message(
+        message.chat.id,
+        "Введите Ваше имя:"
+    )
+    bot.register_next_step_handler(msg, save_new_name)
+
+def save_new_name(message):
+    new_name = message.text.strip()
+    if not (2 <= len(new_name) <= 50):
+        bot.send_message(
+            message.chat.id,
+            "Имя должно содержать от 2 до 50 символов. Попробуйте снова командой /name."
+        )
+        return
+
+    set_name(message.from_user.id, new_name)
+
+    bot.send_message(
+        message.chat.id,
+        f"Имя изменено на: <b>{new_name}</b>",
+        parse_mode="html"
+    )
+
+@bot.message_handler(commands=['birthdate'])
+def ask_birthdate(message):
+    current_date = get_birthdate(message.from_user.id)
+
+    if current_date:
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("Изменить дату рождения", callback_data="change_birthdate"))
+        bot.send_message(
+            message.chat.id,
+            f"Вы уже указали дату рождения: <b>{current_date}</b>",
+            parse_mode="html",
+            reply_markup=markup
+        )
+    else:
+        msg = bot.send_message(
+            message.chat.id,
+            "Введите дату рождения в формате <b>ДЕНЬ.МЕСЯЦ.ГОД</b>\n\nПример: 3.5.1999 или 5.12.1998\n(Без нулей перед числами!)",
+            parse_mode="html"
+        )
+        bot.register_next_step_handler(msg, save_birthdate)
+
+def save_birthdate(message):
+    date = message.text.strip()
+
+    if not is_valid_birthdate(date):
+        msg = bot.send_message(
+            message.chat.id,
+            "Неверный формат даты! Введите снова в формате: <b>ДЕНЬ.МЕСЯЦ.ГОД</b>\nПример: 3.5.1999",
+            parse_mode="html"
+        )
+        bot.register_next_step_handler(msg, save_birthdate)
+        return
+
+    set_birthdate(message.from_user.id, date)
+    bot.send_message(
+        message.chat.id,
+        f"Дата рождения успешно сохранена: <b>{date}</b>",
+        parse_mode="html"
+    )
+
+@bot.callback_query_handler(func=lambda call: call.data == "change_birthdate")
+def change_birthdate(call):
+    msg = bot.send_message(
+        call.message.chat.id,
+        "Введите дату рождения в формате <b>ДЕНЬ.МЕСЯЦ.ГОД</b>\nПример: 3.5.1999",
+        parse_mode="html"
+    )
+    bot.register_next_step_handler(msg, save_birthdate)
+
 @bot.my_chat_member_handler()
 def handle_chat_join(event):
     chat = event.chat
     new_status = event.new_chat_member.status
 
     if new_status in ['member', 'administrator']:
-        register_group(chat.id, chat.type)
+        register_group(
+            chat.id,
+            chat.type,
+            getattr(chat, "title", None),
+            getattr(chat, "username", None)
+        )
 
 @bot.message_handler(content_types=['text'])
 def process_step(message):

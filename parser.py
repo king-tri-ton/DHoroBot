@@ -1,5 +1,5 @@
 from bs4 import BeautifulSoup
-from remove_tags import *
+from regular import remove_tags
 import requests
 import re
 
