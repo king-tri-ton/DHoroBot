@@ -99,5 +99,12 @@ python bot.py
 
 ---
 
-Если у вас есть предложения или вопросы — пишите в Telegram: [@king_triton](https://t.me/king_triton).
+## Лицензия
+
 Проект распространяется по лицензии [MIT](LICENSE).
+
+---
+
+**Автор:** King Triton
+
+Если у вас есть предложения или вопросы - пишите в Telegram: [@king_triton](https://t.me/king_triton) или создавайте issues.
