@@ -5,30 +5,14 @@ from dotenv import load_dotenv
 from telebot import types
 from parser import *
 from db import *
+from keyboards import get_zodiac_keyboard, get_cancel_keyboard, zodiac_signs
 import telebot
 import os
 
 load_dotenv()
-
 TOKEN = os.getenv("TOKEN")
 ADMIN = int(os.getenv("ADMIN", "0"))
-
 bot = telebot.TeleBot(TOKEN)
-
-zodiac_signs = {
-    '♈️ Овен': 'aries',
-    '♉ Телец': 'taurus',
-    '♊ Близнецы': 'gemini',
-    '♋️ Рак': 'cancer',
-    '♌ Лев': 'leo',
-    '♍ Дева': 'virgo',
-    '♎ Весы': 'libra',
-    '♏ Скорпион': 'scorpio',
-    '♐ Стрелец': 'sagittarius',
-    '♑ Козерог': 'capricorn',
-    '♒ Водолей': 'aquarius',
-    '♓ Рыбы': 'pisces'
-}
 
 period_map = {
     'вчера': 'yesterday',
@@ -52,27 +36,19 @@ def get_zodiac_from_text(text):
 def send_welcome(message):
     args = message.text.split()
     zodiac_arg = args[1] if len(args) > 1 else None
-
+    
     # Создание клавиатуры
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=False)
-    col1, col2 = [], []
-    for sign in zodiac_signs:
-        if len(col1) < 6:
-            col1.append(sign)
-        else:
-            col2.append(sign)
-    markup.add(*col1)
-    markup.add(*col2)
-
+    markup = get_zodiac_keyboard()
+    
     # Приветствие
     wlcmmsg = f'<b>👋 Привет {message.from_user.first_name}</b>\n\n'
-
+    
     # Если передан знак зодиака — показать только гороскоп
     if zodiac_arg and zodiac_arg in zodiac_signs.values():
         wlcmmsg += getHoro(zodiac_arg, 'today')
     else:
         wlcmmsg += getHoroTodayAll() + '\n\n⚛️ Выберите Ваш знак зодиака'
-
+    
     bot.send_message(
         message.from_user.id,
         text=wlcmmsg,
@@ -80,7 +56,6 @@ def send_welcome(message):
         parse_mode="html",
         disable_web_page_preview=True
     )
-
     tgidregister(message.from_user.id, message.from_user.first_name)
 
 @bot.message_handler(commands=['chat'])
@@ -105,33 +80,52 @@ def send_stat(message):
 
 @bot.message_handler(commands=['name'])
 def edit_name(message):
+    current_name = get_name(message.from_user.id)
+    
+    if current_name:
+        text = f"Ваше имя: <b>{current_name}</b>\n\nВведите новое имя или нажмите ❌ Отменить:"
+    else:
+        text = "Введите Ваше имя или нажмите ❌ Отменить:"
+    
     msg = bot.send_message(
         message.chat.id,
-        "Введите Ваше имя:"
+        text,
+        parse_mode="html",
+        reply_markup=get_cancel_keyboard()
     )
     bot.register_next_step_handler(msg, save_new_name)
 
 def save_new_name(message):
-    new_name = message.text.strip()
-    if not (2 <= len(new_name) <= 50):
+    if message.text.strip() == "❌ Отменить":
         bot.send_message(
             message.chat.id,
-            "Имя должно содержать от 2 до 50 символов. Попробуйте снова командой /name."
+            "❌ Изменение имени отменено.",
+            reply_markup=get_zodiac_keyboard()
         )
         return
-
+    
+    new_name = message.text.strip()
+    if not (2 <= len(new_name) <= 50):
+        msg = bot.send_message(
+            message.chat.id,
+            "Имя должно содержать от 2 до 50 символов. Попробуйте снова или нажмите ❌ Отменить:",
+            reply_markup=get_cancel_keyboard()
+        )
+        bot.register_next_step_handler(msg, save_new_name)
+        return
+    
     set_name(message.from_user.id, new_name)
-
     bot.send_message(
         message.chat.id,
-        f"Имя изменено на: <b>{new_name}</b>",
-        parse_mode="html"
+        f"✅ Имя изменено на: <b>{new_name}</b>",
+        parse_mode="html",
+        reply_markup=get_zodiac_keyboard()
     )
 
 @bot.message_handler(commands=['birthdate'])
 def ask_birthdate(message):
     current_date = get_birthdate(message.from_user.id)
-
+    
     if current_date:
         markup = types.InlineKeyboardMarkup()
         markup.add(types.InlineKeyboardButton("Изменить дату рождения", callback_data="change_birthdate"))
@@ -144,36 +138,50 @@ def ask_birthdate(message):
     else:
         msg = bot.send_message(
             message.chat.id,
-            "Введите дату рождения в формате <b>ДЕНЬ.МЕСЯЦ.ГОД</b>\n\nПример: 3.5.1999 или 5.12.1998\n(Без нулей перед числами!)",
-            parse_mode="html"
+            "Введите дату рождения в формате <b>ДЕНЬ.МЕСЯЦ.ГОД</b>\n\nПример: 3.5.1999 или 5.12.1998\n(Без нулей перед числами!)\n\nИли нажмите ❌ Отменить",
+            parse_mode="html",
+            reply_markup=get_cancel_keyboard()
         )
         bot.register_next_step_handler(msg, save_birthdate)
 
 def save_birthdate(message):
+    if message.text.strip() == "❌ Отменить":
+        bot.send_message(
+            message.chat.id,
+            "❌ Изменение даты рождения отменено.",
+            reply_markup=get_zodiac_keyboard()
+        )
+        return
+    
     date = message.text.strip()
-
     if not is_valid_birthdate(date):
         msg = bot.send_message(
             message.chat.id,
-            "Неверный формат даты! Введите снова в формате: <b>ДЕНЬ.МЕСЯЦ.ГОД</b>\nПример: 3.5.1999",
-            parse_mode="html"
+            "Неверный формат даты! Введите снова в формате: <b>ДЕНЬ.МЕСЯЦ.ГОД</b>\nПример: 3.5.1999\n\nИли нажмите ❌ Отменить",
+            parse_mode="html",
+            reply_markup=get_cancel_keyboard()
         )
         bot.register_next_step_handler(msg, save_birthdate)
         return
-
+    
     set_birthdate(message.from_user.id, date)
     bot.send_message(
         message.chat.id,
-        f"Дата рождения успешно сохранена: <b>{date}</b>",
-        parse_mode="html"
+        f"✅ Дата рождения успешно сохранена: <b>{date}</b>",
+        parse_mode="html",
+        reply_markup=get_zodiac_keyboard()
     )
 
 @bot.callback_query_handler(func=lambda call: call.data == "change_birthdate")
 def change_birthdate(call):
+    current_date = get_birthdate(call.from_user.id)
+    text = f"Текущая дата рождения: <b>{current_date}</b>\n\nВведите новую дату рождения в формате <b>ДЕНЬ.МЕСЯЦ.ГОД</b>\nПример: 3.5.1999\n\nИли нажмите ❌ Отменить"
+    
     msg = bot.send_message(
         call.message.chat.id,
-        "Введите дату рождения в формате <b>ДЕНЬ.МЕСЯЦ.ГОД</b>\nПример: 3.5.1999",
-        parse_mode="html"
+        text,
+        parse_mode="html",
+        reply_markup=get_cancel_keyboard()
     )
     bot.register_next_step_handler(msg, save_birthdate)
 
@@ -181,7 +189,6 @@ def change_birthdate(call):
 def handle_chat_join(event):
     chat = event.chat
     new_status = event.new_chat_member.status
-
     if new_status in ['member', 'administrator']:
         register_group(
             chat.id,
@@ -193,10 +200,9 @@ def handle_chat_join(event):
 @bot.message_handler(content_types=['text'])
 def process_step(message):
     text = message.text.lower().strip()
-
+    
     if message.chat.type in ['group', 'supergroup']:
         bot_username = bot.get_me().username.lower()
-
         if f"@{bot_username}" in text:
             text = text.replace(f"@{bot_username}", "").strip()
             if not text:
@@ -204,20 +210,18 @@ def process_step(message):
                 return
             
             found_sign = get_zodiac_from_text(text)
-
             if found_sign:
                 found_period = 'сегодня'
                 for period in period_map:
                     if period in text:
                         found_period = period
                         break
-
                 result = getHoro(found_sign, period_map[found_period])
                 bot.reply_to(message, result, parse_mode="html", disable_web_page_preview=True)
             else:
                 bot.reply_to(message, "Пример:\n@DHoroBot Рак сегодня")
             return
-
+    
     sign = zodiac_signs.get(message.text)
     if sign:
         keyboard = types.InlineKeyboardMarkup()

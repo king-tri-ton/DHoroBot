@@ -2,6 +2,7 @@
 /dist/
 /venv/
 /img/
+/test/
 /backups/
 __pycache__/
 *.log
