@@ -103,8 +103,14 @@ python bot.py
 
 Проект распространяется по лицензии [MIT](LICENSE).
 
+## Контакты
+
+По вопросам и предложениям:
+
+- Telegram: [@king_tri_ton](https://t.me/king_tri_ton)
+- Email: mdolmatov99@gmail.com
+- или создавайте issues
+
 ---
 
-**Автор:** King Triton
-
-Если у вас есть предложения или вопросы - пишите в Telegram: [@king_triton](https://t.me/king_triton) или создавайте issues.
+by **King Triton**

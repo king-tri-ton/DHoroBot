@@ -1,17 +1,28 @@
 # coding: utf8
+from keyboards import (
+    get_zodiac_keyboard,
+    get_cancel_keyboard,
+    zodiac_signs,
+    get_newsletter_actions_keyboard,
+    get_newsletters_list_keyboard
+)
+
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from regular import is_valid_birthdate
-from dotenv import load_dotenv
+from config import TOKEN, ADMIN
 from telebot import types
 from parser import *
 from db import *
-from keyboards import get_zodiac_keyboard, get_cancel_keyboard, zodiac_signs
 import telebot
-import os
 
-load_dotenv()
-TOKEN = os.getenv("TOKEN")
-ADMIN = int(os.getenv("ADMIN", "0"))
+from newsletter import (
+    STATE_CREATING,
+    STATE_READY,
+    STATE_SENDING,
+    STATE_COMPLETED,
+    start_newsletter_async
+)
+
 bot = telebot.TeleBot(TOKEN)
 
 period_map = {
@@ -32,31 +43,455 @@ def get_zodiac_from_text(text):
             break
     return found_sign
 
+
+# ==================== КОМАНДЫ РАССЫЛКИ ====================
+
+@bot.message_handler(commands=['newsletter'])
+def newsletter_command(message):
+    """Создание новой рассылки (только для админа)"""
+    if message.chat.id != ADMIN:
+        return
+    
+    # Проверяем, есть ли незавершенная рассылка
+    active_nl = get_active_newsletter_creation()
+    if active_nl:
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("✅ Продолжить создание", callback_data=f"continue_nl_{active_nl[0]}"))
+        markup.add(types.InlineKeyboardButton("❌ Отменить и создать новую", callback_data=f"cancel_nl_{active_nl[0]}"))
+        
+        bot.send_message(
+            ADMIN,
+            f"⚠️ У вас есть незавершенная рассылка:\n\n📝 {active_nl[1]}\n\nЧто делать?",
+            parse_mode='HTML',
+            reply_markup=markup
+        )
+        return
+    
+    # Создаем новую запись в БД
+    nl_id = create_newsletter_initial()
+    
+    msg = bot.send_message(
+        ADMIN,
+        f"📝 <b>Создание рассылки #{nl_id}</b>\n\nВведите название рассылки (например: 'Реклама канала'):",
+        parse_mode='HTML',
+        reply_markup=get_cancel_keyboard()
+    )
+    bot.register_next_step_handler(msg, ask_newsletter_name)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("continue_nl_"))
+def callback_continue_newsletter(call):
+    """Продолжить создание рассылки"""
+    nl_id = int(call.data.split("_")[2])
+    newsletter = get_newsletter(nl_id)
+    
+    if not newsletter:
+        bot.answer_callback_query(call.id, "❌ Рассылка не найдена")
+        return
+    
+    step = newsletter[12]  # поле step
+    
+    if step == 'name':
+        msg = bot.send_message(
+            ADMIN,
+            f"📝 <b>Рассылка #{nl_id}</b>\n\nВведите название рассылки:",
+            parse_mode='HTML',
+            reply_markup=get_cancel_keyboard()
+        )
+        bot.register_next_step_handler(msg, ask_newsletter_name)
+    elif step == 'type':
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+        markup.add("📝 Текстовая рассылка", "🖼 Фото + текст")
+        markup.add("❌ Отменить")
+        
+        msg = bot.send_message(
+            ADMIN,
+            f"📝 <b>Рассылка #{nl_id}</b>\nНазвание: <b>{newsletter[1]}</b>\n\nВыберите тип рассылки:",
+            parse_mode='HTML',
+            reply_markup=markup
+        )
+        bot.register_next_step_handler(msg, ask_newsletter_type)
+    elif step == 'text':
+        msg = bot.send_message(
+            ADMIN,
+            f"📝 <b>Рассылка #{nl_id}</b>\n\nВведите текст рассылки с HTML-форматированием:",
+            parse_mode='HTML',
+            reply_markup=get_cancel_keyboard()
+        )
+        bot.register_next_step_handler(msg, save_newsletter_text)
+    elif step == 'photo':
+        msg = bot.send_message(
+            ADMIN,
+            f"🖼 <b>Рассылка #{nl_id}</b>\n\nОтправьте фото:",
+            parse_mode='HTML',
+            reply_markup=get_cancel_keyboard()
+        )
+        bot.register_next_step_handler(msg, save_newsletter_photo)
+    elif step == 'caption':
+        msg = bot.send_message(
+            ADMIN,
+            f"📝 <b>Рассылка #{nl_id}</b>\n\nВведите подпись к фото:",
+            parse_mode='HTML',
+            reply_markup=get_cancel_keyboard()
+        )
+        bot.register_next_step_handler(msg, save_newsletter_caption)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("cancel_nl_"))
+def callback_cancel_newsletter(call):
+    """Отменить создание рассылки"""
+    nl_id = int(call.data.split("_")[2])
+    cancel_newsletter_creation(nl_id)
+    
+    bot.answer_callback_query(call.id, "✅ Рассылка отменена")
+    bot.delete_message(call.message.chat.id, call.message.message_id)
+    
+    # Создаем новую
+    newsletter_command(call.message)
+
+def ask_newsletter_name(message):
+    """Запрос названия рассылки"""
+    if message.text and message.text.strip() == "❌ Отменить":
+        active_nl = get_active_newsletter_creation()
+        if active_nl:
+            cancel_newsletter_creation(active_nl[0])
+        bot.send_message(ADMIN, "❌ Создание рассылки отменено.", reply_markup=get_zodiac_keyboard())
+        return
+    
+    if not message.text:
+        msg = bot.send_message(ADMIN, "⚠️ Пожалуйста, введите текст.")
+        bot.register_next_step_handler(msg, ask_newsletter_name)
+        return
+    
+    name = message.text.strip()
+    
+    # Получаем активную рассылку и обновляем
+    active_nl = get_active_newsletter_creation()
+    if not active_nl:
+        bot.send_message(ADMIN, "❌ Ошибка: рассылка не найдена")
+        return
+    
+    nl_id = active_nl[0]
+    update_newsletter_name(nl_id, name)
+    update_newsletter_step(nl_id, 'type')
+    
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+    markup.add("📝 Текстовая рассылка", "🖼 Фото + текст")
+    markup.add("❌ Отменить")
+    
+    msg = bot.send_message(
+        ADMIN,
+        f"✅ Название: <b>{name}</b>\n\n📋 Выберите тип рассылки:",
+        parse_mode='HTML',
+        reply_markup=markup
+    )
+    bot.register_next_step_handler(msg, ask_newsletter_type)
+
+def ask_newsletter_type(message):
+    """Запрос типа рассылки"""
+    if message.text and message.text.strip() == "❌ Отменить":
+        active_nl = get_active_newsletter_creation()
+        if active_nl:
+            cancel_newsletter_creation(active_nl[0])
+        bot.send_message(ADMIN, "❌ Создание рассылки отменено.", reply_markup=get_zodiac_keyboard())
+        return
+    
+    if message.text == "📝 Текстовая рассылка":
+        nl_type = 'text'
+    elif message.text == "🖼 Фото + текст":
+        nl_type = 'caption'
+    else:
+        msg = bot.send_message(ADMIN, "⚠️ Пожалуйста, используйте кнопки для выбора типа рассылки.")
+        bot.register_next_step_handler(msg, ask_newsletter_type)
+        return
+    
+    active_nl = get_active_newsletter_creation()
+    if not active_nl:
+        bot.send_message(ADMIN, "❌ Ошибка: рассылка не найдена")
+        return
+    
+    nl_id = active_nl[0]
+    update_newsletter_type(nl_id, nl_type)
+    
+    if nl_type == 'text':
+        update_newsletter_step(nl_id, 'text')
+        msg = bot.send_message(
+            ADMIN,
+            "📝 <b>Введите текст рассылки</b>\n\nВы можете использовать HTML-форматирование:\n<code>&lt;b&gt;жирный&lt;/b&gt;</code>\n<code>&lt;i&gt;курсив&lt;/i&gt;</code>\n<code>&lt;u&gt;подчеркнутый&lt;/u&gt;</code>\n<code>&lt;a href='URL'&gt;ссылка&lt;/a&gt;</code>",
+            parse_mode='HTML',
+            reply_markup=get_cancel_keyboard()
+        )
+        bot.register_next_step_handler(msg, save_newsletter_text)
+    else:
+        update_newsletter_step(nl_id, 'photo')
+        msg = bot.send_message(
+            ADMIN,
+            "🖼 <b>Отправьте фото для рассылки</b>",
+            parse_mode='HTML',
+            reply_markup=get_cancel_keyboard()
+        )
+        bot.register_next_step_handler(msg, save_newsletter_photo)
+
+def save_newsletter_text(message):
+    """Сохранение текста рассылки"""
+    if message.text and message.text.strip() == "❌ Отменить":
+        active_nl = get_active_newsletter_creation()
+        if active_nl:
+            cancel_newsletter_creation(active_nl[0])
+        bot.send_message(ADMIN, "❌ Создание рассылки отменено.", reply_markup=get_zodiac_keyboard())
+        return
+    
+    if not message.text:
+        msg = bot.send_message(ADMIN, "⚠️ Пожалуйста, отправьте текстовое сообщение.")
+        bot.register_next_step_handler(msg, save_newsletter_text)
+        return
+    
+    text = message.html_text if hasattr(message, 'html_text') else message.text
+    
+    active_nl = get_active_newsletter_creation()
+    if not active_nl:
+        bot.send_message(ADMIN, "❌ Ошибка: рассылка не найдена")
+        return
+    
+    nl_id = active_nl[0]
+    update_newsletter_text(nl_id, text)
+    set_newsletter_state(nl_id, STATE_READY)
+    update_newsletter_step(nl_id, 'completed')
+    
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("🚀 Начать рассылку", callback_data=f"start_nl_{nl_id}"))
+    markup.add(types.InlineKeyboardButton("📋 Список рассылок", callback_data="list_newsletters"))
+    
+    bot.send_message(ADMIN, "Главное меню:", reply_markup=get_zodiac_keyboard())
+    bot.send_message(
+        ADMIN,
+        f"✅ <b>Рассылка #{nl_id} создана!</b>\n\n📝 Название: {active_nl[1]}\n📋 Тип: Текстовая\n\n<b>Превью:</b>\n{text}",
+        parse_mode='HTML',
+        reply_markup=markup,
+        disable_web_page_preview=True
+    )
+
+def save_newsletter_photo(message):
+    """Сохранение фото для рассылки"""
+    if message.text and message.text.strip() == "❌ Отменить":
+        active_nl = get_active_newsletter_creation()
+        if active_nl:
+            cancel_newsletter_creation(active_nl[0])
+        bot.send_message(ADMIN, "❌ Создание рассылки отменено.", reply_markup=get_zodiac_keyboard())
+        return
+    
+    if not message.photo:
+        msg = bot.send_message(ADMIN, "⚠️ Пожалуйста, отправьте фото.")
+        bot.register_next_step_handler(msg, save_newsletter_photo)
+        return
+    
+    photo_file_id = message.photo[-1].file_id
+    
+    active_nl = get_active_newsletter_creation()
+    if not active_nl:
+        bot.send_message(ADMIN, "❌ Ошибка: рассылка не найдена")
+        return
+    
+    nl_id = active_nl[0]
+    update_newsletter_photo(nl_id, photo_file_id)
+    update_newsletter_step(nl_id, 'caption')
+    
+    msg = bot.send_message(
+        ADMIN,
+        "📝 <b>Теперь введите подпись к фото</b>\n\nВы можете использовать HTML-форматирование:\n<code>&lt;b&gt;жирный&lt;/b&gt;</code>\n<code>&lt;i&gt;курсив&lt;/i&gt;</code>",
+        parse_mode='HTML',
+        reply_markup=get_cancel_keyboard()
+    )
+    bot.register_next_step_handler(msg, save_newsletter_caption)
+
+def save_newsletter_caption(message):
+    """Сохранение подписи к фото"""
+    if message.text and message.text.strip() == "❌ Отменить":
+        active_nl = get_active_newsletter_creation()
+        if active_nl:
+            cancel_newsletter_creation(active_nl[0])
+        bot.send_message(ADMIN, "❌ Создание рассылки отменено.", reply_markup=get_zodiac_keyboard())
+        return
+    
+    if not message.text:
+        msg = bot.send_message(ADMIN, "⚠️ Пожалуйста, отправьте текст подписи.")
+        bot.register_next_step_handler(msg, save_newsletter_caption)
+        return
+    
+    text = message.html_text if hasattr(message, 'html_text') else message.text
+    
+    active_nl = get_active_newsletter_creation()
+    if not active_nl:
+        bot.send_message(ADMIN, "❌ Ошибка: рассылка не найдена")
+        return
+    
+    nl_id = active_nl[0]
+    update_newsletter_text(nl_id, text)
+    set_newsletter_state(nl_id, STATE_READY)
+    update_newsletter_step(nl_id, 'completed')
+    
+    newsletter = get_newsletter(nl_id)
+    photo_file_id = newsletter[4]
+    
+    bot.send_message(ADMIN, "Главное меню:", reply_markup=get_zodiac_keyboard())
+    bot.send_photo(
+        ADMIN,
+        photo_file_id,
+        caption=f"✅ <b>Рассылка #{nl_id} создана!</b>\n\n📝 Название: {active_nl[1]}\n📋 Тип: Фото + текст\n\n<b>Превью подписи:</b>\n{text}",
+        parse_mode='HTML',
+        reply_markup=get_newsletter_actions_keyboard(nl_id)
+    )
+
+@bot.message_handler(commands=['newsletters'])
+def list_newsletters_command(message):
+    """Список всех рассылок"""
+    if message.chat.id != ADMIN:
+        return
+    
+    show_newsletters_list(message.chat.id)
+
+def show_newsletters_list(chat_id):
+    newsletters = get_all_newsletters()
+
+    if not newsletters:
+        bot.send_message(chat_id, "📭 Рассылок пока нет.")
+        return
+
+    markup = get_newsletters_list_keyboard(newsletters)
+
+    bot.send_message(
+        chat_id,
+        "📋 <b>Список рассылок:</b>\n\n🔄 - создается\n✅ - готова\n📨 - отправляется\n✔️ - завершена",
+        parse_mode='HTML',
+        reply_markup=markup
+    )
+
+@bot.callback_query_handler(func=lambda call: call.data == "create_newsletter")
+def callback_create_newsletter(call):
+    """Callback для создания рассылки"""
+    newsletter_command(call.message)
+
+@bot.callback_query_handler(func=lambda call: call.data == "list_newsletters")
+def callback_list_newsletters(call):
+    """Callback для списка рассылок"""
+    show_newsletters_list(call.message.chat.id)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("view_nl_"))
+def callback_view_newsletter(call):
+    """Просмотр рассылки"""
+    nl_id = int(call.data.split("_")[2])
+    newsletter = get_newsletter(nl_id)
+    
+    if not newsletter:
+        bot.answer_callback_query(call.id, "❌ Рассылка не найдена")
+        return
+    
+    name = newsletter[1]
+    nl_type = newsletter[2]
+    text = newsletter[3]
+    state = newsletter[5]
+    created_at = newsletter[6]
+    total = newsletter[9]
+    successful = newsletter[10]
+    failed = newsletter[11]
+    
+    state_text = {
+        STATE_CREATING: "🔄 Создается",
+        STATE_READY: "✅ Готова к отправке",
+        STATE_SENDING: "📨 Отправляется",
+        STATE_COMPLETED: "✔️ Завершена"
+    }.get(state, "❓ Неизвестно")
+    
+    type_text = "📝 Текстовая" if nl_type == 'text' else "🖼 Фото + текст"
+    
+    info = f"""
+<b>📊 Рассылка #{nl_id}</b>
+
+📝 Название: {name}
+📋 Тип: {type_text}
+🔔 Статус: {state_text}
+📅 Создана: {created_at}
+"""
+    
+    if state == STATE_COMPLETED:
+        info += f"\n📊 Всего: {total}\n✅ Успешно: {successful}\n❌ Ошибок: {failed}"
+    
+    markup = types.InlineKeyboardMarkup()
+    
+    if state == STATE_READY:
+        markup.add(types.InlineKeyboardButton("🚀 Начать рассылку", callback_data=f"start_nl_{nl_id}"))
+    
+    markup.add(types.InlineKeyboardButton("◀️ Назад к списку", callback_data="list_newsletters"))
+    
+    bot.edit_message_text(
+        info,
+        call.message.chat.id,
+        call.message.message_id,
+        parse_mode='HTML',
+        reply_markup=markup
+    )
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("start_nl_"))
+def callback_start_newsletter(call):
+    """Запуск рассылки"""
+    nl_id = int(call.data.split("_")[2])
+    newsletter = get_newsletter(nl_id)
+    
+    if not newsletter:
+        bot.answer_callback_query(call.id, "❌ Рассылка не найдена")
+        return
+    
+    state = newsletter[5]
+    
+    if state == STATE_SENDING:
+        bot.answer_callback_query(call.id, "⚠️ Рассылка уже отправляется!")
+        return
+    
+    if state == STATE_COMPLETED:
+        bot.answer_callback_query(call.id, "⚠️ Эта рассылка уже была отправлена!")
+        return
+    
+    bot.answer_callback_query(call.id, "🚀 Запускаю рассылку...")
+    
+    # Запускаем рассылку в отдельном потоке
+    start_newsletter_async(bot, nl_id, ADMIN)
+
+
+# ==================== ОСНОВНЫЕ КОМАНДЫ БОТА ====================
+
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     args = message.text.split()
     zodiac_arg = args[1] if len(args) > 1 else None
     
-    # Создание клавиатуры
-    markup = get_zodiac_keyboard()
-    
     # Приветствие
-    wlcmmsg = f'<b>👋 Привет {message.from_user.first_name}</b>\n\n'
+    wlcMsg = f'<b>👋 Привет {message.from_user.first_name}</b>\n\n'
     
     # Если передан знак зодиака — показать только гороскоп
     if zodiac_arg and zodiac_arg in zodiac_signs.values():
-        wlcmmsg += getHoro(zodiac_arg, 'today')
+        wlcMsg += getHoro(zodiac_arg, 'today')
     else:
-        wlcmmsg += getHoroTodayAll() + '\n\n⚛️ Выберите Ваш знак зодиака'
+        wlcMsg += getHoroTodayAll() + '\n\n⚛️ Выберите Ваш знак зодиака'
     
     bot.send_message(
         message.from_user.id,
-        text=wlcmmsg,
-        reply_markup=markup,
+        text=wlcMsg,
+        reply_markup=get_zodiac_keyboard(),
         parse_mode="html",
         disable_web_page_preview=True
     )
     tgidregister(message.from_user.id, message.from_user.first_name)
+
+@bot.message_handler(commands=['admin'])
+def admin_panel(message):
+    if message.from_user.id != ADMIN:
+        return
+    
+    admin_text = (
+        "👑 Панель администратора\n\n"
+        "/stat - статистика бота\n"
+        "/chat - добавить/изменить ссылку на чат\n"
+        "/newsletter - создать рассылку\n"
+    )
+    bot.reply_to(message, admin_text)
 
 @bot.message_handler(commands=['chat'])
 def send_chat(message):
@@ -201,10 +636,12 @@ def handle_chat_join(event):
 def process_step(message):
     text = message.text.lower().strip()
     
+    # Обработка групповых чатов
     if message.chat.type in ['group', 'supergroup']:
         bot_username = bot.get_me().username.lower()
         if f"@{bot_username}" in text:
             text = text.replace(f"@{bot_username}", "").strip()
+            
             if not text:
                 bot.reply_to(message, "Чтобы узнать гороскоп, напиши:\n\n@DHoroBot Рак сегодня\n@DHoroBot Лев завтра\n\nПериод можно не указывать, по умолчанию будет 'сегодня'.")
                 return
@@ -220,8 +657,9 @@ def process_step(message):
                 bot.reply_to(message, result, parse_mode="html", disable_web_page_preview=True)
             else:
                 bot.reply_to(message, "Пример:\n@DHoroBot Рак сегодня")
-            return
+        return  # ДОБАВИТЬ ЭТОТ RETURN!!! Чтобы не продолжать обработку для групп
     
+    # Обработка личных сообщений (только здесь клавиатура)
     sign = zodiac_signs.get(message.text)
     if sign:
         keyboard = types.InlineKeyboardMarkup()

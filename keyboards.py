@@ -32,3 +32,41 @@ def get_cancel_keyboard():
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
     markup.add(types.KeyboardButton("❌ Отменить"))
     return markup
+
+def get_newsletter_actions_keyboard(nl_id):
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("🚀 Начать рассылку", callback_data=f"start_nl_{nl_id}"))
+    markup.add(types.InlineKeyboardButton("📋 Список рассылок", callback_data="list_newsletters"))
+    return markup
+
+def get_newsletters_list_keyboard(newsletters):
+    """Клавиатура списка всех рассылок"""
+    markup = types.InlineKeyboardMarkup()
+
+    for nl in newsletters:
+        nl_id = nl[0]
+        name = nl[1]
+        state = nl[5]
+
+        state_emoji = {
+            STATE_CREATING: "🔄",
+            STATE_READY: "✅",
+            STATE_SENDING: "📨",
+            STATE_COMPLETED: "✔️"
+        }.get(state, "❓")
+
+        markup.add(
+            types.InlineKeyboardButton(
+                f"{state_emoji} {name} (ID: {nl_id})",
+                callback_data=f"view_nl_{nl_id}"
+            )
+        )
+
+    markup.add(
+        types.InlineKeyboardButton(
+            "➕ Создать новую",
+            callback_data="create_newsletter"
+        )
+    )
+
+    return markup
