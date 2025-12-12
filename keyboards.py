@@ -1,5 +1,11 @@
 # coding: utf8
 from telebot import types
+from newsletter import (
+    STATE_CREATING,
+    STATE_READY,
+    STATE_SENDING,
+    STATE_COMPLETED
+)
 
 # Знаки зодиака - главный словарь
 zodiac_signs = {
@@ -39,11 +45,16 @@ def get_newsletter_actions_keyboard(nl_id):
     markup.add(types.InlineKeyboardButton("📋 Список рассылок", callback_data="list_newsletters"))
     return markup
 
-def get_newsletters_list_keyboard(newsletters):
-    """Клавиатура списка всех рассылок"""
+def get_newsletters_list_keyboard(newsletters, page=1, per_page=5):
     markup = types.InlineKeyboardMarkup()
 
-    for nl in newsletters:
+    total = len(newsletters)
+    pages = (total + per_page - 1) // per_page
+
+    start = (page - 1) * per_page
+    end = start + per_page
+
+    for nl in newsletters[start:end]:
         nl_id = nl[0]
         name = nl[1]
         state = nl[5]
@@ -62,11 +73,26 @@ def get_newsletters_list_keyboard(newsletters):
             )
         )
 
-    markup.add(
-        types.InlineKeyboardButton(
-            "➕ Создать новую",
-            callback_data="create_newsletter"
-        )
-    )
+    nav = []
+    if page > 1:
+        nav.append(types.InlineKeyboardButton("⬅️", callback_data=f"nl_page_{page-1}"))
+    if page < pages:
+        nav.append(types.InlineKeyboardButton("➡️", callback_data=f"nl_page_{page+1}"))
+    if nav:
+        markup.row(*nav)
 
+    markup.add(types.InlineKeyboardButton("➕ Создать новую", callback_data="create_newsletter"))
     return markup
+
+def get_unfinished_newsletter_keyboard(nl_id):
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("✅ Продолжить создание", callback_data=f"continue_nl_{nl_id}"))
+    markup.add(types.InlineKeyboardButton("❌ Отменить и создать новую", callback_data=f"cancel_nl_{nl_id}"))
+    return markup
+
+def get_newsletter_type_keyboard():
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+    markup.add("📝 Текстовая рассылка", "🖼 Фото + текст")
+    markup.add("❌ Отменить")
+    return markup
+

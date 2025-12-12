@@ -4,7 +4,9 @@ from keyboards import (
     get_cancel_keyboard,
     zodiac_signs,
     get_newsletter_actions_keyboard,
-    get_newsletters_list_keyboard
+    get_newsletters_list_keyboard,
+    get_unfinished_newsletter_keyboard,
+    get_newsletter_type_keyboard
 )
 
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -48,39 +50,56 @@ def get_zodiac_from_text(text):
 
 @bot.message_handler(commands=['newsletter'])
 def newsletter_command(message):
-    """Создание новой рассылки (только для админа)"""
     if message.chat.id != ADMIN:
         return
     
-    # Проверяем, есть ли незавершенная рассылка
     active_nl = get_active_newsletter_creation()
+
+    # Если есть незавершённая — показываем меню
     if active_nl:
-        markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("✅ Продолжить создание", callback_data=f"continue_nl_{active_nl[0]}"))
-        markup.add(types.InlineKeyboardButton("❌ Отменить и создать новую", callback_data=f"cancel_nl_{active_nl[0]}"))
-        
+        nl_id = active_nl[0]
         bot.send_message(
             ADMIN,
             f"⚠️ У вас есть незавершенная рассылка:\n\n📝 {active_nl[1]}\n\nЧто делать?",
             parse_mode='HTML',
-            reply_markup=markup
+            reply_markup=get_unfinished_newsletter_keyboard(nl_id)
         )
         return
     
-    # Создаем новую запись в БД
-    nl_id = create_newsletter_initial()
-    
-    msg = bot.send_message(
-        ADMIN,
-        f"📝 <b>Создание рассылки #{nl_id}</b>\n\nВведите название рассылки (например: 'Реклама канала'):",
-        parse_mode='HTML',
-        reply_markup=get_cancel_keyboard()
+    # Если нет — показываем список со страницы 1
+    show_newsletters_list(ADMIN, page=1)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("nl_page_"))
+def newsletter_page(call):
+    page = int(call.data.split("_")[2])
+    newsletters = get_all_newsletters()
+
+    markup = get_newsletters_list_keyboard(newsletters, page=page)
+
+    bot.edit_message_reply_markup(
+        call.message.chat.id,
+        call.message.message_id,
+        reply_markup=markup
     )
-    bot.register_next_step_handler(msg, ask_newsletter_name)
+
+def show_newsletters_list(chat_id, page=1):
+    newsletters = get_all_newsletters()
+
+    if not newsletters:
+        bot.send_message(chat_id, "📭 Рассылок пока нет.")
+        return
+
+    markup = get_newsletters_list_keyboard(newsletters, page=page)
+
+    bot.send_message(
+        chat_id,
+        "📋 <b>Список рассылок:</b>\n\n🔄 - создается\n✅ - готова\n📨 - отправляется\n✔️ - завершена",
+        parse_mode='HTML',
+        reply_markup=markup
+    )
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("continue_nl_"))
 def callback_continue_newsletter(call):
-    """Продолжить создание рассылки"""
     nl_id = int(call.data.split("_")[2])
     newsletter = get_newsletter(nl_id)
     
@@ -88,7 +107,7 @@ def callback_continue_newsletter(call):
         bot.answer_callback_query(call.id, "❌ Рассылка не найдена")
         return
     
-    step = newsletter[12]  # поле step
+    step = newsletter[12]
     
     if step == 'name':
         msg = bot.send_message(
@@ -98,26 +117,25 @@ def callback_continue_newsletter(call):
             reply_markup=get_cancel_keyboard()
         )
         bot.register_next_step_handler(msg, ask_newsletter_name)
+
     elif step == 'type':
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-        markup.add("📝 Текстовая рассылка", "🖼 Фото + текст")
-        markup.add("❌ Отменить")
-        
         msg = bot.send_message(
             ADMIN,
             f"📝 <b>Рассылка #{nl_id}</b>\nНазвание: <b>{newsletter[1]}</b>\n\nВыберите тип рассылки:",
             parse_mode='HTML',
-            reply_markup=markup
+            reply_markup=get_newsletter_type_keyboard()
         )
         bot.register_next_step_handler(msg, ask_newsletter_type)
+
     elif step == 'text':
         msg = bot.send_message(
             ADMIN,
-            f"📝 <b>Рассылка #{nl_id}</b>\n\nВведите текст рассылки с HTML-форматированием:",
+            f"📝 <b>Рассылка #{nl_id}</b>\n\nВведите текст рассылки:",
             parse_mode='HTML',
             reply_markup=get_cancel_keyboard()
         )
         bot.register_next_step_handler(msg, save_newsletter_text)
+
     elif step == 'photo':
         msg = bot.send_message(
             ADMIN,
@@ -126,6 +144,7 @@ def callback_continue_newsletter(call):
             reply_markup=get_cancel_keyboard()
         )
         bot.register_next_step_handler(msg, save_newsletter_photo)
+
     elif step == 'caption':
         msg = bot.send_message(
             ADMIN,
@@ -148,7 +167,6 @@ def callback_cancel_newsletter(call):
     newsletter_command(call.message)
 
 def ask_newsletter_name(message):
-    """Запрос названия рассылки"""
     if message.text and message.text.strip() == "❌ Отменить":
         active_nl = get_active_newsletter_creation()
         if active_nl:
@@ -163,7 +181,6 @@ def ask_newsletter_name(message):
     
     name = message.text.strip()
     
-    # Получаем активную рассылку и обновляем
     active_nl = get_active_newsletter_creation()
     if not active_nl:
         bot.send_message(ADMIN, "❌ Ошибка: рассылка не найдена")
@@ -173,15 +190,11 @@ def ask_newsletter_name(message):
     update_newsletter_name(nl_id, name)
     update_newsletter_step(nl_id, 'type')
     
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-    markup.add("📝 Текстовая рассылка", "🖼 Фото + текст")
-    markup.add("❌ Отменить")
-    
     msg = bot.send_message(
         ADMIN,
         f"✅ Название: <b>{name}</b>\n\n📋 Выберите тип рассылки:",
         parse_mode='HTML',
-        reply_markup=markup
+        reply_markup=get_newsletter_type_keyboard()
     )
     bot.register_next_step_handler(msg, ask_newsletter_type)
 
@@ -256,16 +269,13 @@ def save_newsletter_text(message):
     set_newsletter_state(nl_id, STATE_READY)
     update_newsletter_step(nl_id, 'completed')
     
-    markup = types.InlineKeyboardMarkup()
-    markup.add(types.InlineKeyboardButton("🚀 Начать рассылку", callback_data=f"start_nl_{nl_id}"))
-    markup.add(types.InlineKeyboardButton("📋 Список рассылок", callback_data="list_newsletters"))
-    
     bot.send_message(ADMIN, "Главное меню:", reply_markup=get_zodiac_keyboard())
+    
     bot.send_message(
         ADMIN,
         f"✅ <b>Рассылка #{nl_id} создана!</b>\n\n📝 Название: {active_nl[1]}\n📋 Тип: Текстовая\n\n<b>Превью:</b>\n{text}",
         parse_mode='HTML',
-        reply_markup=markup,
+        reply_markup=get_newsletter_actions_keyboard(nl_id),
         disable_web_page_preview=True
     )
 
@@ -340,39 +350,10 @@ def save_newsletter_caption(message):
         reply_markup=get_newsletter_actions_keyboard(nl_id)
     )
 
-@bot.message_handler(commands=['newsletters'])
-def list_newsletters_command(message):
-    """Список всех рассылок"""
-    if message.chat.id != ADMIN:
-        return
-    
-    show_newsletters_list(message.chat.id)
-
-def show_newsletters_list(chat_id):
-    newsletters = get_all_newsletters()
-
-    if not newsletters:
-        bot.send_message(chat_id, "📭 Рассылок пока нет.")
-        return
-
-    markup = get_newsletters_list_keyboard(newsletters)
-
-    bot.send_message(
-        chat_id,
-        "📋 <b>Список рассылок:</b>\n\n🔄 - создается\n✅ - готова\n📨 - отправляется\n✔️ - завершена",
-        parse_mode='HTML',
-        reply_markup=markup
-    )
-
 @bot.callback_query_handler(func=lambda call: call.data == "create_newsletter")
 def callback_create_newsletter(call):
     """Callback для создания рассылки"""
     newsletter_command(call.message)
-
-@bot.callback_query_handler(func=lambda call: call.data == "list_newsletters")
-def callback_list_newsletters(call):
-    """Callback для списка рассылок"""
-    show_newsletters_list(call.message.chat.id)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("view_nl_"))
 def callback_view_newsletter(call):
@@ -428,6 +409,11 @@ def callback_view_newsletter(call):
         parse_mode='HTML',
         reply_markup=markup
     )
+
+@bot.callback_query_handler(func=lambda call: call.data == "list_newsletters")
+def callback_list_newsletters(call):
+    show_newsletters_list(call.message.chat.id, page=1)
+    bot.answer_callback_query(call.id)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("start_nl_"))
 def callback_start_newsletter(call):
@@ -488,8 +474,8 @@ def admin_panel(message):
     admin_text = (
         "👑 Панель администратора\n\n"
         "/stat - статистика бота\n"
-        "/chat - добавить/изменить ссылку на чат\n"
-        "/newsletter - создать рассылку\n"
+        "/chat [link] - добавить/изменить ссылку на чат\n"
+        "/newsletter - управление рассылками\n"
     )
     bot.reply_to(message, admin_text)
 
@@ -659,7 +645,7 @@ def process_step(message):
                 bot.reply_to(message, "Пример:\n@DHoroBot Рак сегодня")
         return  # ДОБАВИТЬ ЭТОТ RETURN!!! Чтобы не продолжать обработку для групп
     
-    # Обработка личных сообщений (только здесь клавиатура)
+    # Обработка личных сообщений
     sign = zodiac_signs.get(message.text)
     if sign:
         keyboard = types.InlineKeyboardMarkup()
@@ -668,7 +654,27 @@ def process_step(message):
 
 @bot.callback_query_handler(func=lambda call: True)
 def callback_worker(call):
-    el = call.data.split("|")
-    bot.send_message(call.message.chat.id, getHoro(el[0], period_map[el[1]]), parse_mode="html", disable_web_page_preview=True)
+    data = call.data
+
+    # Обрабатываем ТОЛЬКО гороскоп
+    if data.startswith("horo_"):
+        try:
+            el = data.split("_")[1:]    
+            if len(el) < 2:
+                bot.answer_callback_query(call.id, "Ошибка: некорректные данные")
+                return
+
+            sign = el[0]
+            period = el[1]
+
+            bot.send_message(
+                call.message.chat.id,
+                getHoro(sign, period_map[period]),
+                parse_mode="html",
+                disable_web_page_preview=True
+            )
+        except Exception as e:
+            print("Horo error:", e)
+        return
 
 bot.infinity_polling(interval=0)
