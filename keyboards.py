@@ -1,98 +1,125 @@
 # coding: utf8
 from telebot import types
-from newsletter import (
-    STATE_CREATING,
-    STATE_READY,
-    STATE_SENDING,
-    STATE_COMPLETED
-)
+from api.horo import ZODIAC_SIGNS, PERIOD_MAP
 
-# Знаки зодиака - главный словарь
-zodiac_signs = {
-    '♈️ Овен': 'aries',
-    '♉ Телец': 'taurus',
-    '♊ Близнецы': 'gemini',
-    '♋️ Рак': 'cancer',
-    '♌ Лев': 'leo',
-    '♍ Дева': 'virgo',
-    '♎ Весы': 'libra',
-    '♏ Скорпион': 'scorpio',
-    '♐ Стрелец': 'sagittarius',
-    '♑ Козерог': 'capricorn',
-    '♒ Водолей': 'aquarius',
-    '♓ Рыбы': 'pisces'
-}
+TEXT_CANCEL = "❌ Отменить"
 
 def get_zodiac_keyboard():
-    """Возвращает клавиатуру со знаками зодиака"""
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=False)
-    signs_list = list(zodiac_signs.keys())
-    col1 = signs_list[:6]
-    col2 = signs_list[6:]
-    markup.add(*col1)
-    markup.add(*col2)
-    return markup
+	"""
+	Создает клавиатуру со знаками зодиака.
+	"""
+	markup = types.ReplyKeyboardMarkup(
+		resize_keyboard=True,
+		one_time_keyboard=False
+	)
+
+	signs = list(ZODIAC_SIGNS.values())
+
+	row1 = signs[:6]
+	row2 = signs[6:]
+
+	markup.add(*row1)
+	markup.add(*row2)
+
+	return markup
+
+
+def get_period_inline_keyboard(sign_key):
+	"""
+	Создает клавиатуру с периодами (сегодня, завтра...) под сообщением.
+	"""
+	markup = types.InlineKeyboardMarkup(row_width=3) # 3 кнопки в ряд
+	buttons = []
+	
+	for text_ru, period_api_key in PERIOD_MAP.items():
+		# Формируем callback: horo_знак_период
+		# Например: horo_aries_today
+		cb_data = f"horo_{sign_key}_{period_api_key}"
+		
+		buttons.append(
+			types.InlineKeyboardButton(
+				text=text_ru.capitalize(), 
+				callback_data=cb_data
+			)
+		)
+	
+	markup.add(*buttons)
+	return markup
+
 
 def get_cancel_keyboard():
-    """Возвращает клавиатуру с кнопкой Отменить"""
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-    markup.add(types.KeyboardButton("❌ Отменить"))
-    return markup
+	"""Возвращает клавиатуру с кнопкой Отменить"""
+	markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+	markup.add(types.KeyboardButton(TEXT_CANCEL))
+	return markup
 
-def get_newsletter_actions_keyboard(nl_id):
+
+
+def change_birthdate_keyboard():
+	markup = types.InlineKeyboardMarkup()
+	markup.add(types.InlineKeyboardButton("Изменить дату рождения", callback_data="change_birthdate"))
+	return markup
+
+
+
+def get_personal_period_inline_keyboard():
+	"""
+	Создает инлайн-клавиатуру для выбора периода (Сегодня, Завтра, Неделя, Месяц)
+	для персонального гороскопа.
+	"""
+	markup = types.InlineKeyboardMarkup(row_width=3)
+	buttons = []
+	
+	for period_ru, api_key in PERIOD_MAP.items():
+		if period_ru == 'вчера':  # Пропускаем 'вчера'
+			continue
+			
+		# Формируем callback: personal_период (например: personal_today)
+		cb_data = f"personal_{api_key}"
+		
+		buttons.append(
+			types.InlineKeyboardButton(
+				text=period_ru.capitalize(), 
+				callback_data=cb_data
+			)
+		)
+	
+	# Добавляем кнопки в разметку, можно по 3 в ряд, если их много
+	markup.add(*buttons)
+	
+	return markup
+
+
+def feedback_button_keyboard(horoscope_id, disabled=None):
+    """
+    Создает клавиатуру для оценки.
+    disabled: None, 'up' или 'down' — какая кнопка уже была нажата.
+    """
     markup = types.InlineKeyboardMarkup()
-    markup.add(types.InlineKeyboardButton("🚀 Начать рассылку", callback_data=f"start_nl_{nl_id}"))
-    markup.add(types.InlineKeyboardButton("📋 Список рассылок", callback_data="list_newsletters"))
+    
+    # 1. Если оценка еще не была дана (disabled=None): возвращаем обе активные кнопки
+    if disabled is None:
+        up_cb = f"rate_up_{horoscope_id}"
+        down_cb = f"rate_down_{horoscope_id}"
+        up_btn = types.InlineKeyboardButton("👍", callback_data=up_cb)
+        down_btn = types.InlineKeyboardButton("👎", callback_data=down_cb)
+        markup.add(up_btn, down_btn)
+    
+    # 2. Если пользователь поставил Лайк (disabled='up'): возвращаем только '✅'
+    elif disabled == "up":
+        # Кнопка '✅' не должна иметь callback_data, чтобы быть неактивной
+        up_btn_final = types.InlineKeyboardButton("🥰 Понравилось", callback_data="none")
+        markup.add(up_btn_final)
+        
+    # 3. Если пользователь поставил Дизлайк (disabled='down'): возвращаем только '👎' (как неактивную)
+    elif disabled == "down":
+        # Кнопка '👎' не должна иметь callback_data, чтобы быть неактивной
+        down_btn_final = types.InlineKeyboardButton("👎 Не понравилось", callback_data="none")
+        # Добавляем кнопку для отзыва, если хотите (она уже была в bot.py, но можно добавить сюда)
+        # review_btn = types.InlineKeyboardButton("✍️ Оставить отзыв", callback_data=f"review_{horoscope_id}")
+        markup.add(down_btn_final)
+        
     return markup
 
-def get_newsletters_list_keyboard(newsletters, page=1, per_page=5):
-    markup = types.InlineKeyboardMarkup()
 
-    total = len(newsletters)
-    pages = (total + per_page - 1) // per_page
-
-    start = (page - 1) * per_page
-    end = start + per_page
-
-    for nl in newsletters[start:end]:
-        nl_id = nl[0]
-        name = nl[1]
-        state = nl[5]
-
-        state_emoji = {
-            STATE_CREATING: "🔄",
-            STATE_READY: "✅",
-            STATE_SENDING: "📨",
-            STATE_COMPLETED: "✔️"
-        }.get(state, "❓")
-
-        markup.add(
-            types.InlineKeyboardButton(
-                f"{state_emoji} {name} (ID: {nl_id})",
-                callback_data=f"view_nl_{nl_id}"
-            )
-        )
-
-    nav = []
-    if page > 1:
-        nav.append(types.InlineKeyboardButton("⬅️", callback_data=f"nl_page_{page-1}"))
-    if page < pages:
-        nav.append(types.InlineKeyboardButton("➡️", callback_data=f"nl_page_{page+1}"))
-    if nav:
-        markup.row(*nav)
-
-    markup.add(types.InlineKeyboardButton("➕ Создать новую", callback_data="create_newsletter"))
-    return markup
-
-def get_unfinished_newsletter_keyboard(nl_id):
-    markup = types.InlineKeyboardMarkup()
-    markup.add(types.InlineKeyboardButton("✅ Продолжить создание", callback_data=f"continue_nl_{nl_id}"))
-    markup.add(types.InlineKeyboardButton("❌ Отменить и создать новую", callback_data=f"cancel_nl_{nl_id}"))
-    return markup
-
-def get_newsletter_type_keyboard():
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-    markup.add("📝 Текстовая рассылка", "🖼 Фото + текст")
-    markup.add("❌ Отменить")
-    return markup
 

@@ -1,9 +1,27 @@
 import sqlite3
+from datetime import datetime, timedelta
+from contextlib import contextmanager
+from config import UTC
 
-conn = sqlite3.connect('horo.db', check_same_thread=False)
+DB_PATH = 'horo.db'
+
+@contextmanager
+def get_db():
+    """Создает новое соединение для каждой операции"""
+    conn = sqlite3.connect(DB_PATH, timeout=10)
+    try:
+        yield conn
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Database error: {e}")
+        raise
+    finally:
+        conn.close()
+
 
 def init_db():
-    try:
+    with get_db() as conn:
         cur = conn.cursor()
         cur.execute("""
             CREATE TABLE IF NOT EXISTS users (
@@ -25,20 +43,14 @@ def init_db():
             );
         """)
         cur.execute("""
-            CREATE TABLE IF NOT EXISTS newsletters (
+            CREATE TABLE IF NOT EXISTS personal_horoscopes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                type TEXT,
-                text TEXT,
-                photo_file_id TEXT,
-                state INTEGER DEFAULT 0,
-                created_at TEXT,
-                started_at TEXT,
-                completed_at TEXT,
-                total_users INTEGER DEFAULT 0,
-                successful INTEGER DEFAULT 0,
-                failed INTEGER DEFAULT 0,
-                step TEXT DEFAULT 'name'
+                tgid INTEGER NOT NULL,
+                period_key TEXT NOT NULL,
+                horoscope_text TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                rating INTEGER DEFAULT 0,
+                feedback TEXT
             );
         """)
         
@@ -50,6 +62,8 @@ def init_db():
             cur.execute("ALTER TABLE users ADD COLUMN name TEXT;")
         if 'birthdate' not in user_columns:
             cur.execute("ALTER TABLE users ADD COLUMN birthdate TEXT;")
+        if 'registered_at' not in user_columns:
+            cur.execute("ALTER TABLE users ADD COLUMN registered_at TEXT;")
         
         # Проверяем поля у groups
         cur.execute("PRAGMA table_info(groups);")
@@ -59,237 +73,152 @@ def init_db():
             cur.execute("ALTER TABLE groups ADD COLUMN title TEXT;")
         if 'username' not in group_columns:
             cur.execute("ALTER TABLE groups ADD COLUMN username TEXT;")
-        
-        # Проверяем поле step у newsletters
-        cur.execute("PRAGMA table_info(newsletters);")
-        nl_columns = [col[1] for col in cur.fetchall()]
-        
-        if 'step' not in nl_columns:
-            cur.execute("ALTER TABLE newsletters ADD COLUMN step TEXT DEFAULT 'name';")
-        
+        if 'registered_at' not in group_columns:
+            cur.execute("ALTER TABLE groups ADD COLUMN registered_at TEXT;")
+
         conn.commit()
-    except Exception as e:
-        print(e)
+        
+        # Создаем индексы
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_users_tgid ON users(tgid);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_groups_chat_id ON groups(chat_id);")
 
 init_db()
 
-# ==================== ФУНКЦИИ ДЛЯ ПОЛЬЗОВАТЕЛЕЙ ====================
+
+
+# ==================== ФУНКЦИЯ РЕГИСТРАЦИИ ПОЛЬЗОВАТЕЛЯ ====================
 
 def tgidregister(tid, name=None):
-    try:
+    """Регистрация пользователя"""
+    with get_db() as conn:  # ← используем with get_db()
         cur = conn.cursor()
-        cur.execute("INSERT OR IGNORE INTO users (tgid) VALUES(?);", (tid,))
-        cur.execute("SELECT name FROM users WHERE tgid = ?;", (tid,))
-        row = cur.fetchone()
-        current_name = row[0] if row else None
+        now = datetime.utcnow() + timedelta(hours=UTC)
+        cur.execute("""
+            INSERT OR IGNORE INTO users (tgid, registered_at)
+            VALUES (?, ?);
+        """, (tid, now.isoformat()))
         
-        if not current_name and name:
-            cur.execute("UPDATE users SET name = ? WHERE tgid = ?;", (name, tid))
-        
-        conn.commit()
-    except Exception as e:
-        print(e)
+        if name:
+            cur.execute("SELECT name FROM users WHERE tgid = ?;", (tid,))
+            row = cur.fetchone()
+            if not row or not row[0]:
+                cur.execute("UPDATE users SET name = ? WHERE tgid = ?;", (name, tid))
+
+def countusers():
+    """Для админа"""
+    with get_db() as conn:  # ← используем with get_db()
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM users;")
+        return cur.fetchone()[0]  # возвращаем int
+
+
+
+
+# ==================== ФУНКЦИИ РЕГИСТРАЦИИ ГРУПП ====================
+
+def register_group(chat_id, chat_type, title=None, username=None):
+    with get_db() as conn:  # ← используем with get_db()
+        cur = conn.cursor()
+        now = datetime.utcnow() + timedelta(hours=UTC)
+        cur.execute("""
+            INSERT OR IGNORE INTO groups
+            (chat_id, chat_type, title, username, registered_at)
+            VALUES (?, ?, ?, ?, ?);
+        """, (chat_id, chat_type, title, username, now.isoformat()))
+
+def countgroups():
+    with get_db() as conn:  # ← используем with get_db()
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM groups;")
+        return cur.fetchone()[0]  # возвращаем int
+
+
+
+
+# ==================== ФУНКЦИИ ДЛЯ ИМЕНИ ====================
 
 def get_name(tgid):
     """Получить имя пользователя"""
-    try:
+    with get_db() as conn:  # ← используем with get_db()
         cur = conn.cursor()
         cur.execute("SELECT name FROM users WHERE tgid = ?;", (tgid,))
         row = cur.fetchone()
         return row[0] if row else None
-    except Exception as e:
-        print(e)
-        return None
 
 def set_name(tgid, name):
-    try:
+    with get_db() as conn:  # ← используем with get_db()
         cur = conn.cursor()
         cur.execute("UPDATE users SET name = ? WHERE tgid = ?;", (name, tgid))
-        conn.commit()
-    except Exception as e:
-        print(e)
+
+
+# ==================== ФУНКЦИИ ДЛЯ ДАТЫ РОЖДЕНИЯ ====================
 
 def get_birthdate(tgid):
-    try:
+    with get_db() as conn:  # ← используем with get_db()
         cur = conn.cursor()
         cur.execute("SELECT birthdate FROM users WHERE tgid = ?;", (tgid,))
         row = cur.fetchone()
         return row[0] if row else None
-    except Exception as e:
-        print(e)
-        return None
 
 def set_birthdate(tgid, date):
-    try:
+    with get_db() as conn:  # ← используем with get_db()
         cur = conn.cursor()
         cur.execute("UPDATE users SET birthdate = ? WHERE tgid = ?;", (date, tgid))
-        conn.commit()
-    except Exception as e:
-        print(e)
 
-def countusers():
-    """Для админа"""
-    try:
-        cur = conn.cursor()
-        cur.execute("SELECT COUNT(*) FROM users;")
-        countusers = cur.fetchall()[0][0]
-        return str(countusers)
-    except Exception as e:
-        print(e)
 
-def getusers():
-    """Для админа"""
-    try:
-        cur = conn.cursor()
-        cur.execute("SELECT * FROM users;")
-        getuser = cur.fetchall()
-        return getuser
-    except Exception as e:
-        print(e)
-
-def get_all_users_tgid():
-    """Получить список всех tgid для рассылки"""
-    try:
-        cur = conn.cursor()
-        cur.execute("SELECT tgid FROM users;")
-        return [row[0] for row in cur.fetchall()]
-    except Exception as e:
-        print(f"Ошибка получения пользователей: {e}")
-        return []
 
 # ==================== ФУНКЦИИ ДЛЯ НАСТРОЕК ====================
 
 def set_chat_link(link):
     """Для админа"""
-    try:
+    with get_db() as conn:  # ← используем with get_db()
         cur = conn.cursor()
         cur.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('chat_link', ?);", (link,))
-        conn.commit()
-    except Exception as e:
-        print(e)
 
 def get_chat_link():
-    try:
+    with get_db() as conn:  # ← используем with get_db()
         cur = conn.cursor()
         cur.execute("SELECT value FROM settings WHERE key = 'chat_link';")
         row = cur.fetchone()
         return row[0] if row else None
-    except Exception as e:
-        print(e)
-        return None
 
-# ==================== ФУНКЦИИ ДЛЯ ГРУПП ====================
 
-def register_group(chat_id, chat_type, title=None, username=None):
-    try:
+
+# db.py
+
+def add_personal_horoscope(tgid, period_key, horoscope_text):
+    """Добавляем сгенерированный персональный гороскоп в базу"""
+    with get_db() as conn:
         cur = conn.cursor()
-        cur.execute(
-            "INSERT OR IGNORE INTO groups (chat_id, chat_type, title, username) VALUES (?, ?, ?, ?);",
-            (chat_id, chat_type, title, username)
-        )
-        conn.commit()
-    except Exception as e:
-        print(e)
+        cur.execute("""
+            INSERT INTO personal_horoscopes (tgid, period_key, horoscope_text)
+            VALUES (?, ?, ?)
+        """, (tgid, period_key, horoscope_text))
+        return cur.lastrowid  # возвращаем id записи
 
-def countgroups():
-    try:
+def get_personal_horoscope(horoscope_id):
+    """Получаем гороскоп по id"""
+    with get_db() as conn:
         cur = conn.cursor()
-        cur.execute("SELECT COUNT(*) FROM groups;")
-        return str(cur.fetchone()[0])
-    except Exception as e:
-        print(e)
-        return "0"
-
-# ==================== ФУНКЦИИ ДЛЯ РАССЫЛКИ ====================
-
-def create_newsletter_initial():
-    """Создать начальную запись рассылки"""
-    try:
-        from datetime import datetime
-        cur = conn.cursor()
-        created_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        cur.execute(
-            "INSERT INTO newsletters (name, state, created_at, step) VALUES (?, ?, ?, ?);",
-            ('Новая рассылка', 0, created_at, 'name')
-        )
-        conn.commit()
-        return cur.lastrowid
-    except Exception as e:
-        print(f"Ошибка создания рассылки: {e}")
-        return None
-
-def get_active_newsletter_creation(admin_id=None):
-    """Получить активную создаваемую рассылку"""
-    try:
-        cur = conn.cursor()
-        cur.execute("SELECT * FROM newsletters WHERE state = 0 ORDER BY id DESC LIMIT 1;")
+        cur.execute("""
+            SELECT id, tgid, period_key, horoscope_text, rating, feedback
+            FROM personal_horoscopes
+            WHERE id = ?
+        """, (horoscope_id,))
         return cur.fetchone()
-    except Exception as e:
-        print(f"Ошибка получения активной рассылки: {e}")
-        return None
 
-def update_newsletter_stats(nl_id, field, value):
-    """Обновить любое поле рассылки"""
-    try:
+def update_horoscope_rating(horoscope_id, rating):
+    """Обновляем оценку гороскопа (1 или -1)"""
+    with get_db() as conn:
         cur = conn.cursor()
-        cur.execute(f"UPDATE newsletters SET {field} = ? WHERE id = ?;", (value, nl_id))
-        conn.commit()
-        return True
-    except Exception as e:
-        print(f"Ошибка обновления поля {field}: {e}")
-        return False
+        cur.execute("""
+            UPDATE personal_horoscopes SET rating = ? WHERE id = ?
+        """, (rating, horoscope_id))
 
-def update_newsletter_name(nl_id, name):
-    """Обновить название рассылки"""
-    return update_newsletter_stats(nl_id, 'name', name)
-
-def update_newsletter_type(nl_id, nl_type):
-    """Обновить тип рассылки"""
-    return update_newsletter_stats(nl_id, 'type', nl_type)
-
-def update_newsletter_text(nl_id, text):
-    """Обновить текст рассылки"""
-    return update_newsletter_stats(nl_id, 'text', text)
-
-def update_newsletter_photo(nl_id, file_id):
-    """Обновить file_id фото"""
-    return update_newsletter_stats(nl_id, 'photo_file_id', file_id)
-
-def update_newsletter_step(nl_id, step):
-    """Обновить текущий шаг создания"""
-    return update_newsletter_stats(nl_id, 'step', step)
-
-def set_newsletter_state(nl_id, state):
-    """Изменить состояние рассылки"""
-    return update_newsletter_stats(nl_id, 'state', state)
-
-def get_newsletter(nl_id):
-    """Получить рассылку по ID"""
-    try:
+def update_horoscope_feedback(horoscope_id, feedback):
+    """Добавляем текстовый отзыв к гороскопу"""
+    with get_db() as conn:
         cur = conn.cursor()
-        cur.execute("SELECT * FROM newsletters WHERE id = ?;", (nl_id,))
-        return cur.fetchone()
-    except Exception as e:
-        print(f"Ошибка получения рассылки: {e}")
-        return None
-
-def get_all_newsletters():
-    """Получить все рассылки"""
-    try:
-        cur = conn.cursor()
-        cur.execute("SELECT * FROM newsletters ORDER BY id DESC;")
-        return cur.fetchall()
-    except Exception as e:
-        print(f"Ошибка получения рассылок: {e}")
-        return []
-
-def cancel_newsletter_creation(nl_id):
-    """Отменить создание рассылки (удалить из БД)"""
-    try:
-        cur = conn.cursor()
-        cur.execute("DELETE FROM newsletters WHERE id = ? AND state = 0;", (nl_id,))
-        conn.commit()
-        return True
-    except Exception as e:
-        print(f"Ошибка отмены создания: {e}")
-        return False
+        cur.execute("""
+            UPDATE personal_horoscopes SET feedback = ? WHERE id = ?
+        """, (feedback, horoscope_id))
