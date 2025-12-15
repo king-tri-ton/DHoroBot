@@ -1,5 +1,5 @@
 from openai import OpenAI
-from config import OPENAI_API_KEY
+from config import OPENAI_API_KEY, HOROSCOPE_PROMPT
 from utils import md_to_html
 
 client = OpenAI(api_key=OPENAI_API_KEY)
@@ -28,15 +28,13 @@ def get_openai_response(message: str):
         return f"Ошибка при обращении к API: {e}", 0, 0
 
 
+
 def build_personal_horoscope_prompt(name: str, birthdate: str, period_key: str, period_text: str):
-    """
-    Формирует prompt для персонального гороскопа.
-    """
-    return (
-        f"Составь персональный гороскоп для пользователя {name}, "
-        f"Определи его знак зодиака по дате рождения {birthdate}, "
-        f"на период {period_text}. "
-        f"Текст должен быть дружелюбным, лаконичным, на русском языке, "
-        f"немного с эмодзи и не используй символ длинное тире, "
-        f"добавь пару советов дополни свой ответ."
-    )
+    try:
+        return HOROSCOPE_PROMPT.format(
+            name=name,
+            birthdate=birthdate,
+            period_text=period_text
+        )
+    except KeyError as e:
+        raise RuntimeError(f"В шаблоне HOROSCOPE_PROMPT не хватает переменной: {e}")

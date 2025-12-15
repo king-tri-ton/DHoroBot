@@ -9,3 +9,4 @@ __pycache__/
 *.db
 .env
 PROBLEMS.md
+test.py

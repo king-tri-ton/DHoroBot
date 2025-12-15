@@ -1,6 +1,8 @@
 # coding: utf8
 from telebot import types
 from api.horo import ZODIAC_SIGNS, PERIOD_MAP
+from db import check_free_horoscope_today
+from utils import personal_horoscope_text
 
 TEXT_CANCEL = "❌ Отменить"
 
@@ -30,7 +32,7 @@ def get_period_inline_keyboard(sign_key):
 	"""
 	markup = types.InlineKeyboardMarkup(row_width=3) # 3 кнопки в ряд
 	buttons = []
-	
+
 	for text_ru, period_api_key in PERIOD_MAP.items():
 		# Формируем callback: horo_знак_период
 		# Например: horo_aries_today
@@ -42,7 +44,7 @@ def get_period_inline_keyboard(sign_key):
 				callback_data=cb_data
 			)
 		)
-	
+
 	markup.add(*buttons)
 	return markup
 
@@ -62,64 +64,72 @@ def change_birthdate_keyboard():
 
 
 
-def get_personal_period_inline_keyboard():
+def get_stars_payment_keyboard():
+	"""Клавиатура тарифов для команды /tariffs"""
+	markup = types.InlineKeyboardMarkup(row_width=1)
+
+	markup.add(
+		types.InlineKeyboardButton(f"{personal_horoscope_text(1)} — ⭐️ 10 Stars", callback_data="buy_1_10"),
+		types.InlineKeyboardButton(f"{personal_horoscope_text(3)} — ⭐️ 25 Stars", callback_data="buy_3_25"),
+		types.InlineKeyboardButton(f"{personal_horoscope_text(5)} — ⭐️ 40 Stars", callback_data="buy_5_40")
+	)
+	return markup
+
+
+def get_personal_period_inline_keyboard(user_id):
 	"""
-	Создает инлайн-клавиатуру для выбора периода (Сегодня, Завтра, Неделя, Месяц)
-	для персонального гороскопа.
+	Клавиатура выбора периода для /personal.
+	Если 'сегодня' доступно бесплатно — помечаем это.
 	"""
-	markup = types.InlineKeyboardMarkup(row_width=3)
+	markup = types.InlineKeyboardMarkup(row_width=2)
 	buttons = []
-	
+
+	# Проверяем, доступно ли сегодня бесплатно
+	is_free_today = not check_free_horoscope_today(user_id)
+
 	for period_ru, api_key in PERIOD_MAP.items():
-		if period_ru == 'вчера':  # Пропускаем 'вчера'
+		if period_ru == 'вчера':
 			continue
-			
-		# Формируем callback: personal_период (например: personal_today)
+
 		cb_data = f"personal_{api_key}"
-		
-		buttons.append(
-			types.InlineKeyboardButton(
-				text=period_ru.capitalize(), 
-				callback_data=cb_data
-			)
-		)
-	
-	# Добавляем кнопки в разметку, можно по 3 в ряд, если их много
+		text = period_ru.capitalize()
+
+		# Визуальная метка только для бесплатного, чтобы пользователь понимал
+		if api_key == 'today' and is_free_today:
+			text = f"🎁 {text} (Бесплатно)"
+
+		buttons.append(types.InlineKeyboardButton(text=text, callback_data=cb_data))
+
 	markup.add(*buttons)
-	
 	return markup
 
 
 def feedback_button_keyboard(horoscope_id, disabled=None):
-    """
-    Создает клавиатуру для оценки.
-    disabled: None, 'up' или 'down' — какая кнопка уже была нажата.
-    """
-    markup = types.InlineKeyboardMarkup()
-    
-    # 1. Если оценка еще не была дана (disabled=None): возвращаем обе активные кнопки
-    if disabled is None:
-        up_cb = f"rate_up_{horoscope_id}"
-        down_cb = f"rate_down_{horoscope_id}"
-        up_btn = types.InlineKeyboardButton("👍", callback_data=up_cb)
-        down_btn = types.InlineKeyboardButton("👎", callback_data=down_cb)
-        markup.add(up_btn, down_btn)
-    
-    # 2. Если пользователь поставил Лайк (disabled='up'): возвращаем только '✅'
-    elif disabled == "up":
-        # Кнопка '✅' не должна иметь callback_data, чтобы быть неактивной
-        up_btn_final = types.InlineKeyboardButton("🥰 Понравилось", callback_data="none")
-        markup.add(up_btn_final)
-        
-    # 3. Если пользователь поставил Дизлайк (disabled='down'): возвращаем только '👎' (как неактивную)
-    elif disabled == "down":
-        # Кнопка '👎' не должна иметь callback_data, чтобы быть неактивной
-        down_btn_final = types.InlineKeyboardButton("👎 Не понравилось", callback_data="none")
-        # Добавляем кнопку для отзыва, если хотите (она уже была в bot.py, но можно добавить сюда)
-        # review_btn = types.InlineKeyboardButton("✍️ Оставить отзыв", callback_data=f"review_{horoscope_id}")
-        markup.add(down_btn_final)
-        
-    return markup
+	"""
+	Создает клавиатуру для оценки.
+	disabled: None, 'up' или 'down' — какая кнопка уже была нажата.
+	"""
+	markup = types.InlineKeyboardMarkup()
+
+	if disabled is None:
+		up_cb = f"rate_up_{horoscope_id}"
+		down_cb = f"rate_down_{horoscope_id}"
+		up_btn = types.InlineKeyboardButton("👍", callback_data=up_cb)
+		down_btn = types.InlineKeyboardButton("👎", callback_data=down_cb)
+		markup.add(up_btn, down_btn)
+
+	elif disabled == "up":
+		up_btn_final = types.InlineKeyboardButton("🥰 Понравилось", callback_data="none")
+		markup.add(up_btn_final)
+
+	elif disabled == "down":
+		down_btn_final = types.InlineKeyboardButton("👎 Не понравилось", callback_data="none")
+		# Добавляем кнопку для отзыва, если хотите (она уже была в bot.py, но можно добавить сюда)
+		# review_btn = types.InlineKeyboardButton("✍️ Оставить отзыв", callback_data=f"review_{horoscope_id}")
+		markup.add(down_btn_final)
+
+	return markup
+
 
 
 

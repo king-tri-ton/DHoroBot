@@ -5,6 +5,7 @@ from keyboards import (
 	feedback_button_keyboard,
 	get_zodiac_keyboard,
 	get_cancel_keyboard,
+	get_stars_payment_keyboard,
 	TEXT_CANCEL
 )
 
@@ -16,9 +17,16 @@ from config import TOKEN, USER_AGENT, ADMIN, BOT_LINK
 
 from db import *
 
-from utils import is_valid_birthdate, get_bot_username, get_period_text
+from utils import (
+	is_valid_birthdate,
+	get_bot_username,
+	get_period_text,
+	personal_horoscope_text
+)
 
 import telebot
+
+from telebot.types import LabeledPrice
 
 import random
 
@@ -156,7 +164,7 @@ def save_birthdate(message):
 @bot.callback_query_handler(func=lambda call: call.data == "change_birthdate")
 def change_birthdate(call):
 	current_date = get_birthdate(call.from_user.id)
-	text = f"Текущая дата рождения: <b>{current_date}</b>\n\nВведите дату рождения в формате <b>ДЕНЬ.МЕСЯЦ.ГОД</b>\nПример: 3.5.1999\n\nИли нажмите {TEXT_CANCEL}"
+	text = f"Ваша дата рождения: <b>{current_date}</b>\n\nВведите дату рождения в формате <b>ДЕНЬ.МЕСЯЦ.ГОД</b>\nПример: 3.5.1999\n\nИли нажмите {TEXT_CANCEL}"
 	
 	msg = bot.send_message(
 		call.message.chat.id,
@@ -179,54 +187,165 @@ def send_chat(message):
 
 
 
+
+@bot.message_handler(commands=['tariffs'])
+def show_tariffs(message):
+    user_id = message.from_user.id
+    balance = get_user_balance(user_id)
+
+    text = (
+        f"🌟 <b>Ваш личный счет: {personal_horoscope_text(balance)}</b>\n\n"
+        "Персональный гороскоп — это <b>уникальный прогноз</b>, созданный ИИ специально для вас, с учетом вашей даты рождения. Узнайте о возможностях на Неделю, Месяц или даже Год!\n\n"
+        "Выберите тариф, чтобы начать планирование своего будущего и получить максимальную выгоду:"
+    )
+
+    bot.send_message(
+        user_id,
+        text,
+        parse_mode="html",
+        reply_markup=get_stars_payment_keyboard()
+    )
+
+
+
+
 @bot.message_handler(commands=['personal'])
 def personal_horo_command(message):
 	user_id = message.from_user.id
-	name = get_name(user_id)
 	birthdate = get_birthdate(user_id)
 
 	if not birthdate:
-		msg = bot.send_message(
-			user_id,
-			"⚠️ Для персонального гороскопа необходимо указать дату рождения.\nИспользуйте /birthday для её добавления."
-		)
+		bot.send_message(user_id, "⚠️ Сначала укажите дату рождения через /birthday")
 		return
 	
+	# НИКАКОГО БАЛАНСА. Только предложение выбрать период.
 	bot.send_message(
 		user_id,
-		"⭐️ Выберите период для персонального гороскопа:",
-		reply_markup=get_personal_period_inline_keyboard()
+		"<b>🔮 Ваше будущее в ваших руках!</b>\n\nПолучите <b>уникальный</b> гороскоп, созданный <i>специально</i> для вас. Выберите период, чтобы узнать, что приготовили звёзды:",
+		parse_mode="html",
+		reply_markup=get_personal_period_inline_keyboard(user_id)
 	)
 
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("personal_"))
 def handle_personal_horo(call):
 	user_id = call.from_user.id
+	chat_id = call.message.chat.id
 	period_key = call.data.split("_")[1]
+	
+	# 1. Сразу проверяем, платно это или бесплатно
+	# Если период "today" И пользователь его еще НЕ брал сегодня -> Бесплатно
+	is_free_today = (period_key == 'today' and not check_free_horoscope_today(user_id))
+	
+	cost = 0 if is_free_today else 1
+	
+	# 2. Если платно — проверяем баланс
+	if cost > 0:
+		balance = get_user_balance(user_id)
+		if balance < cost:
+			# БАЛАНСА НЕТ — ОТПРАВЛЯЕМ В /tariffs
+			bot.answer_callback_query(call.id, text="Ваш запас Персональных Гороскопов закончился", show_alert=True)
+			bot.send_message(
+				chat_id,
+				"🚫 <b>Ваш запас Персональных Гороскопов закончился</b>\n"
+				"Не дайте случайности управлять вашей жизнью! Узнайте, что ждет вас впереди, получив уникальное предсказание\n\n"
+				"Пожалуйста, приобретите тариф:",
+				parse_mode="html",
+				reply_markup=get_stars_payment_keyboard() # Показываем кнопку покупки, но не отправляем в /tariffs текстом
+			)
+			return
 
+	# 3. Если все ок — начинаем работу
 	name = get_name(user_id)
 	birthdate = get_birthdate(user_id)
-
-	if not birthdate:
-		bot.send_message(user_id, "⚠️ Дата рождения не указана. Используйте /birthday")
-		return
-
-	bot.send_message(user_id, "⏳ Составляю ваш персональный гороскоп...")
-
 	period_text = get_period_text(period_key)
 
-	prompt = build_personal_horoscope_prompt(name, birthdate, period_key, period_text)
-	text, _, _ = get_openai_response(prompt)
-	horoscope_id = add_personal_horoscope(user_id, period_key, text)
+	# Убираем кнопки у старого сообщения
+	try:
+		bot.edit_message_reply_markup(chat_id, call.message.message_id, reply_markup=None)
+	except:
+		pass
 
+	# Списываем баланс (если cost = 0, ничего не спишется)
+	if cost > 0:
+		update_user_balance(user_id, -cost)
+
+	# Сообщение-заглушка
+	loading_msg = bot.send_message(chat_id, "⏳ Составляю прогноз...")
+	bot.answer_callback_query(call.id)
+
+	# Генерация
+	prompt = build_personal_horoscope_prompt(name, birthdate, period_key, period_text)
+	
+	try:
+		text, _, _ = get_openai_response(prompt)
+	except Exception as e:
+		# Вернуть баланс при ошибке
+		if cost > 0:
+			update_user_balance(user_id, cost)
+		bot.delete_message(chat_id, loading_msg.message_id)
+		bot.send_message(chat_id, "⚠️ Ошибка генерации. Попробуйте позже.")
+		return
+
+	# Сохраняем и отправляем
+	horoscope_id = add_personal_horoscope(user_id, period_key, text)
+	
+	bot.delete_message(chat_id, loading_msg.message_id)
+	
 	bot.send_message(
-		user_id,
-		f"<b>Персональный гороскоп</b>\n\n{text}",
-		# Изменено: передаем horoscope_id
+		chat_id,
+		f"⭐️ <b>Персональный гороскоп {period_text.lower()}</b>\n\n{text}",
 		reply_markup=feedback_button_keyboard(horoscope_id),
 		parse_mode="html",
 		disable_web_page_preview=True
 	)
+
+# ==================== ОПЛАТА STARS ====================
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("buy_"))
+def send_invoice_stars(call):
+	user_id = call.from_user.id
+	_, qty, price = call.data.split("_")
+	
+	bot.send_invoice(
+		chat_id=user_id,
+		title=f"Пакет: {qty} запросов",
+		description=f"Покупка {qty} запросов для гороскопа",
+		invoice_payload=f"stars_{qty}",
+		provider_token="", # Для Stars пусто
+		currency="XTR",
+		prices=[LabeledPrice(label=f"{qty} запросов", amount=int(price))],
+		start_parameter="buy_stars"
+	)
+	bot.answer_callback_query(call.id)
+
+@bot.pre_checkout_query_handler(func=lambda query: True)
+def checkout(pre_checkout_query):
+	bot.answer_pre_checkout_query(pre_checkout_query.id, ok=True)
+
+@bot.message_handler(content_types=['successful_payment'])
+def got_payment(message):
+	user_id = message.from_user.id
+	payload = message.successful_payment.invoice_payload
+	
+	if payload.startswith("stars_"):
+		qty = int(payload.split("_")[1])
+		
+		# Начисляем и сохраняем историю
+		update_user_balance(user_id, qty)
+		add_payment_record(
+			user_id, 
+			message.successful_payment.total_amount, 
+			qty, 
+			message.successful_payment.telegram_payment_charge_id
+		)
+		
+		bot.send_message(
+			user_id,
+			f"✅ Успешно! Добавлено запросов: {qty}.\n"
+			f"Проверить баланс: /tariffs\n"
+			f"Получить гороскоп: /personal"
+		)
 
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("rate_"))
@@ -274,7 +393,7 @@ def handle_feedback(message, horoscope_id):
 	if message.text.strip() == TEXT_CANCEL:
 		bot.send_message(
 			message.chat.id,
-			"🥰 Спасибо, что оценили гороскоп. Ваша оценка учтена.", # ИСПРАВЛЕНО: Признаем, что оценка (👎) была поставлена.
+			"🥰 Спасибо, что оценили гороскоп. Ваша оценка учтена.",
 			reply_markup=get_zodiac_keyboard()
 		)
 		return
@@ -283,8 +402,8 @@ def handle_feedback(message, horoscope_id):
 	update_horoscope_feedback(horoscope_id, message.text)
 	bot.send_message(
 		message.chat.id, 
-		"🥰 Спасибо за ваш развернутый отзыв! Мы ценим ваше мнение и постараемся его учесть.", # Улучшенное сообщение о сохранении
-		reply_markup=get_zodiac_keyboard() # Возврат к основной клавиатуре
+		"🥰 Спасибо за ваш развернутый отзыв! Мы ценим ваше мнение и постараемся его учесть.",
+		reply_markup=get_zodiac_keyboard()
 	)
 
 

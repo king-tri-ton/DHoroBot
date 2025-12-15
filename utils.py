@@ -96,3 +96,16 @@ def get_period_text(period_key: str) -> str:
         return f"{now.year} год"
 
     return period_key
+
+
+def personal_horoscope_text(balance: int) -> str:
+    balance = abs(balance)
+
+    if balance % 10 == 1 and balance % 100 != 11:
+        form = "Персональный гороскоп"
+    elif 2 <= balance % 10 <= 4 and not (12 <= balance % 100 <= 14):
+        form = "Персональных гороскопа"
+    else:
+        form = "Персональных гороскопов"
+
+    return f"{balance} {form}"
