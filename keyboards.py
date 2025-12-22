@@ -34,8 +34,6 @@ def get_period_inline_keyboard(sign_key):
 	buttons = []
 
 	for text_ru, period_api_key in PERIOD_MAP.items():
-		# Формируем callback: horo_знак_период
-		# Например: horo_aries_today
 		cb_data = f"horo_{sign_key}_{period_api_key}"
 		
 		buttons.append(
@@ -84,7 +82,6 @@ def get_personal_period_inline_keyboard(user_id):
 	markup = types.InlineKeyboardMarkup(row_width=2)
 	buttons = []
 
-	# Проверяем, доступно ли сегодня бесплатно
 	is_free_today = not check_free_horoscope_today(user_id)
 
 	for period_ru, api_key in PERIOD_MAP.items():
@@ -94,7 +91,6 @@ def get_personal_period_inline_keyboard(user_id):
 		cb_data = f"personal_{api_key}"
 		text = period_ru.capitalize()
 
-		# Визуальная метка только для бесплатного, чтобы пользователь понимал
 		if api_key == 'today' and is_free_today:
 			text = f"🎁 {text} (Бесплатно)"
 
@@ -124,8 +120,6 @@ def feedback_button_keyboard(horoscope_id, disabled=None):
 
 	elif disabled == "down":
 		down_btn_final = types.InlineKeyboardButton("👎 Не понравилось", callback_data="none")
-		# Добавляем кнопку для отзыва, если хотите (она уже была в bot.py, но можно добавить сюда)
-		# review_btn = types.InlineKeyboardButton("✍️ Оставить отзыв", callback_data=f"review_{horoscope_id}")
 		markup.add(down_btn_final)
 
 	return markup

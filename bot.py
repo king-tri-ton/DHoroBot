@@ -9,13 +9,23 @@ from keyboards import (
 	TEXT_CANCEL
 )
 
-from ai import get_openai_response, build_personal_horoscope_prompt
+from ai import (
+	get_openai_response,
+	build_personal_horoscope_prompt
+)
 
-from api.horo import HoroAPI, ZODIAC_SIGNS, PERIOD_MAP
+from api.horo import (
+	HoroAPI,
+	ZODIAC_SIGNS,
+	PERIOD_MAP
+)
 
-from config import TOKEN, USER_AGENT, ADMIN, BOT_LINK
-
-from db import *
+from config import (
+	TOKEN,
+	USER_AGENT,
+	ADMIN,
+	BOT_LINK
+)
 
 from utils import (
 	is_valid_birthdate,
@@ -24,9 +34,11 @@ from utils import (
 	personal_horoscope_text
 )
 
-import telebot
-
 from telebot.types import LabeledPrice
+
+from db import *
+
+import telebot
 
 import random
 
@@ -37,32 +49,33 @@ horo = HoroAPI(USER_AGENT)
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-	args = message.text.split()
-	zodiac_arg = args[1] if len(args) > 1 else None
+    args = message.text.split()
+    zodiac_arg = args[1] if len(args) > 1 else None
 
-	user_id = message.from_user.id
-	first_name = message.from_user.first_name
+    user_id = message.from_user.id
+    first_name = (message.from_user.first_name or "").strip()
 
-	# регистрируем пользователя (дата пишется внутри tgidregister)
-	tgidregister(user_id, first_name)
+    if not first_name:
+        first_name = "друг"
 
-	wlcMsg = f'<b>👋 Привет  {first_name}</b>\n\n'
+    tgidregister(user_id, first_name)
 
-	# если передан знак зодиака
-	if zodiac_arg and zodiac_arg in ZODIAC_SIGNS:
-		title, text = horo.get_horo(zodiac_arg, 'today')
-		wlcMsg += f'<b>{title}</b>\n\n{text}\n\n'
-	else:
-		title, text = horo.get_today_all()
-		wlcMsg += f'<b>{title}</b>\n\n{text}\n\n<b>⚛️ Выберите Ваш знак зодиака</b>'
+    wlcMsg = f'<b>Привет, {first_name}</b>\n\n'
 
-	bot.send_message(
-		user_id,
-		wlcMsg,
-		reply_markup=get_zodiac_keyboard(),
-		parse_mode="html",
-		disable_web_page_preview=True
-	)
+    if zodiac_arg and zodiac_arg in ZODIAC_SIGNS:
+        title, text = horo.get_horo(zodiac_arg, 'today')
+        wlcMsg += f'<b>{title}</b>\n\n{text}\n\n'
+    else:
+        title, text = horo.get_today_all()
+        wlcMsg += f'<b>{title}</b>\n\n{text}\n\n<b>Выберите Ваш знак зодиака</b>'
+
+    bot.send_message(
+        user_id,
+        wlcMsg,
+        reply_markup=get_zodiac_keyboard(),
+        parse_mode="html",
+        disable_web_page_preview=True
+    )
 
 
 
@@ -217,8 +230,7 @@ def personal_horo_command(message):
 	if not birthdate:
 		bot.send_message(user_id, "⚠️ Сначала укажите дату рождения через /birthday")
 		return
-	
-	# НИКАКОГО БАЛАНСА. Только предложение выбрать период.
+
 	bot.send_message(
 		user_id,
 		"<b>🔮 Ваше будущее в ваших руках!</b>\n\nПолучите <b>уникальный</b> гороскоп, созданный <i>специально</i> для вас. Выберите период, чтобы узнать, что приготовили звёзды:",
@@ -232,18 +244,14 @@ def handle_personal_horo(call):
 	user_id = call.from_user.id
 	chat_id = call.message.chat.id
 	period_key = call.data.split("_")[1]
-	
-	# 1. Сразу проверяем, платно это или бесплатно
-	# Если период "today" И пользователь его еще НЕ брал сегодня -> Бесплатно
+
 	is_free_today = (period_key == 'today' and not check_free_horoscope_today(user_id))
 	
 	cost = 0 if is_free_today else 1
-	
-	# 2. Если платно — проверяем баланс
+
 	if cost > 0:
 		balance = get_user_balance(user_id)
 		if balance < cost:
-			# БАЛАНСА НЕТ — ОТПРАВЛЯЕМ В /tariffs
 			bot.answer_callback_query(call.id, text="Ваш запас Персональных Гороскопов закончился", show_alert=True)
 			bot.send_message(
 				chat_id,
@@ -251,43 +259,36 @@ def handle_personal_horo(call):
 				"Не дайте случайности управлять вашей жизнью! Узнайте, что ждет вас впереди, получив уникальное предсказание\n\n"
 				"Пожалуйста, приобретите тариф:",
 				parse_mode="html",
-				reply_markup=get_stars_payment_keyboard() # Показываем кнопку покупки, но не отправляем в /tariffs текстом
+				reply_markup=get_stars_payment_keyboard()
 			)
 			return
 
-	# 3. Если все ок — начинаем работу
 	name = get_name(user_id)
 	birthdate = get_birthdate(user_id)
 	period_text = get_period_text(period_key)
 
-	# Убираем кнопки у старого сообщения
 	try:
 		bot.edit_message_reply_markup(chat_id, call.message.message_id, reply_markup=None)
 	except:
 		pass
 
-	# Списываем баланс (если cost = 0, ничего не спишется)
 	if cost > 0:
 		update_user_balance(user_id, -cost)
 
-	# Сообщение-заглушка
 	loading_msg = bot.send_message(chat_id, "⏳ Составляю прогноз...")
 	bot.answer_callback_query(call.id)
 
-	# Генерация
 	prompt = build_personal_horoscope_prompt(name, birthdate, period_key, period_text)
 	
 	try:
 		text, _, _ = get_openai_response(prompt)
 	except Exception as e:
-		# Вернуть баланс при ошибке
 		if cost > 0:
 			update_user_balance(user_id, cost)
 		bot.delete_message(chat_id, loading_msg.message_id)
 		bot.send_message(chat_id, "⚠️ Ошибка генерации. Попробуйте позже.")
 		return
 
-	# Сохраняем и отправляем
 	horoscope_id = add_personal_horoscope(user_id, period_key, text)
 	
 	bot.delete_message(chat_id, loading_msg.message_id)
@@ -304,20 +305,23 @@ def handle_personal_horo(call):
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("buy_"))
 def send_invoice_stars(call):
-	user_id = call.from_user.id
-	_, qty, price = call.data.split("_")
-	
-	bot.send_invoice(
-		chat_id=user_id,
-		title=f"Пакет: {qty} запросов",
-		description=f"Покупка {qty} запросов для гороскопа",
-		invoice_payload=f"stars_{qty}",
-		provider_token="", # Для Stars пусто
-		currency="XTR",
-		prices=[LabeledPrice(label=f"{qty} запросов", amount=int(price))],
-		start_parameter="buy_stars"
-	)
-	bot.answer_callback_query(call.id)
+    user_id = call.from_user.id
+    _, qty, price = call.data.split("_")
+
+    qty = int(qty)
+    price = int(price)
+
+    bot.send_invoice(
+        chat_id=user_id,
+        title=f"Пакет: {personal_horoscope_text(qty)}",
+        description=f"Покупка {personal_horoscope_text(qty)}",
+        invoice_payload=f"stars_{qty}",
+        provider_token="",
+        currency="XTR",
+        prices=[LabeledPrice(label=personal_horoscope_text(qty), amount=price)],
+        start_parameter="buy_stars"
+    )
+    bot.answer_callback_query(call.id)
 
 @bot.pre_checkout_query_handler(func=lambda query: True)
 def checkout(pre_checkout_query):
@@ -330,8 +334,7 @@ def got_payment(message):
 	
 	if payload.startswith("stars_"):
 		qty = int(payload.split("_")[1])
-		
-		# Начисляем и сохраняем историю
+
 		update_user_balance(user_id, qty)
 		add_payment_record(
 			user_id, 
@@ -339,7 +342,7 @@ def got_payment(message):
 			qty, 
 			message.successful_payment.telegram_payment_charge_id
 		)
-		
+
 		bot.send_message(
 			user_id,
 			f"✅ Успешно! Добавлено запросов: {qty}.\n"
@@ -351,17 +354,16 @@ def got_payment(message):
 @bot.callback_query_handler(func=lambda call: call.data.startswith("rate_"))
 def handle_rating(call):
 	user_id = call.from_user.id
-	
+
 	parts = call.data.split("_")
 	action = parts[1]
 	horoscope_id = int(parts[2])
 	message_id = call.message.message_id
-	
+
 	if action == "up":
 		update_horoscope_rating(horoscope_id, 1)
 		bot.answer_callback_query(call.id, text="Спасибо за 👍")
-		
-		# Обновляем кнопки: теперь будет только '✅ Понравилось'
+
 		bot.edit_message_reply_markup(
 			call.message.chat.id, 
 			message_id, 
@@ -371,15 +373,13 @@ def handle_rating(call):
 	elif action == "down":
 		update_horoscope_rating(horoscope_id, -1)
 		bot.answer_callback_query(call.id, text="Спасибо за 👎")
-		
-		# Обновляем кнопки: теперь будет только '👎 Не понравилось'
+
 		bot.edit_message_reply_markup(
 			call.message.chat.id, 
 			message_id, 
 			reply_markup=feedback_button_keyboard(horoscope_id, disabled="down")
 		)
 
-		# ... (Код для запроса отзыва остается прежним)
 		msg = bot.send_message(
 			user_id,
 			"🥲 Жаль, что не понравилось. Можете написать короткий отзыв, что не понравилось? Почему? (необязательно):",
@@ -397,8 +397,7 @@ def handle_feedback(message, horoscope_id):
 			reply_markup=get_zodiac_keyboard()
 		)
 		return
-		
-	# Если не отмена, то сохраняем отзыв
+
 	update_horoscope_feedback(horoscope_id, message.text)
 	bot.send_message(
 		message.chat.id, 
@@ -424,7 +423,7 @@ def admin_panel(message):
 
 @bot.message_handler(commands=['stat'])
 def send_stat(message):
-	if message.from_user.id == ADMIN:  # ← изменено с message.chat.id
+	if message.from_user.id == ADMIN:
 		stat = f'<b>📊 Статистика</b>\n\n🔄 Количество пользователей: {str(countusers())}\n👥 Групп/чатов/форумов: {str(countgroups())}'
 		bot.send_message(ADMIN, text=stat, parse_mode="html")
 
@@ -455,7 +454,6 @@ def process_chat_link(message):
 		bot.send_message(ADMIN, "❌ Изменение ссылки отменено.", reply_markup=get_zodiac_keyboard())
 		return
 
-	# Проверка, что это ссылка на Telegram
 	if not text.startswith("https://t.me/"):
 		bot.send_message(ADMIN, f"⚠️ Неверный формат ссылки. Попробуйте снова или нажмите {TEXT_CANCEL}.", reply_markup=get_cancel_keyboard())
 		bot.register_next_step_handler(message, process_chat_link)
@@ -467,13 +465,11 @@ def process_chat_link(message):
 
 
 
-# Регистрация группы/супергруппы/канала
 @bot.my_chat_member_handler()
 def handle_chat_join(event):
 	chat = event.chat
 	new_status = event.new_chat_member.status
 
-	# Регистрируем ТОЛЬКО группы и каналы
 	if chat.type not in ('group', 'supergroup', 'channel'):
 		return
 
@@ -486,7 +482,6 @@ def handle_chat_join(event):
 		)
 
 
-# Обработка сообщений
 @bot.message_handler(content_types=['text'])
 def handle_message(message):
 	chat_type = message.chat.type
@@ -498,10 +493,7 @@ def handle_message(message):
 
 
 def handle_private(message):
-	text = message.text.strip() # Не делаем lower() сразу, чтобы сохранить эмодзи если они важны, но для сравнения будем понижать
-	
-	# 1. Проверяем, является ли текст знаком зодиака
-	# Нам нужно найти ключ (например 'cancer') по значению ('♋️ Рак')
+	text = message.text.strip()
 	chosen_sign_key = None
 	for key, value in ZODIAC_SIGNS.items():
 		if value.lower() == text.lower():
@@ -509,7 +501,6 @@ def handle_private(message):
 			break
 
 	if chosen_sign_key:
-		# Если знак найден — отправляем вопрос с Inline-кнопками
 		keyboard = get_period_inline_keyboard(chosen_sign_key)
 		bot.send_message(
 			message.chat.id,
@@ -518,7 +509,6 @@ def handle_private(message):
 			parse_mode="html",
 		)
 	else:
-		# Если текст не распознан как знак, показываем обычную клавиатуру
 		bot.send_message(
 			message.chat.id, 
 			"Пожалуйста, выберите знак зодиака:", 
@@ -528,29 +518,24 @@ def handle_private(message):
 @bot.callback_query_handler(func=lambda call: call.data.startswith("horo_"))
 def handle_horo_callback(call):
 	data = call.data
-	
-	# Отвечаем на callback немедленно
+
 	bot.answer_callback_query(call.id)
 
 	try:
-		# 1. Извлекаем данные
 		parts = data.split("_")
 		if len(parts) < 3:
 			return 
 
-		sign_key = parts[1]       # 'cancer'
-		period_api_key = parts[2] # 'tomorrow'
-		
-		# Получаем русские названия для редактирования сообщения
+		sign_key = parts[1]
+		period_api_key = parts[2]
+
 		sign_name = ZODIAC_SIGNS.get(sign_key, "Неизвестный знак")
-		
-		# Обратный поиск русского названия периода
+
 		period_ru = next(
 			(ru for ru, api_key in PERIOD_MAP.items() if api_key == period_api_key), 
 			period_api_key
 		)
-		
-		# 2. Получаем гороскоп
+
 		title, content = horo.get_horo(sign_key, period_api_key)
 
 		title_with_emoji = f"☀️ {title}"
@@ -558,9 +543,9 @@ def handle_horo_callback(call):
 		# -------------------------------------------------------------
 		# ДОБАВЛЕНИЕ СКРЫТОГО ТЕКСТА С КОМАНДОЙ /PERSONAL (Шанс 20%)
 		# -------------------------------------------------------------
-		if random.random() < 0.20: 
+		if random.random() < 0.70: 
 			hidden_text_snippet = (
-				"\n\n" # Добавим отступы
+				"\n\n"
 				"<tg-spoiler>"
 				"✨ Получите Ваш <b>персональный</b> гороскоп.\nВоспользуйтесь: /personal"
 				"</tg-spoiler>"
@@ -570,7 +555,6 @@ def handle_horo_callback(call):
 
 		content += f"\n\n<a href='{BOT_LINK}'>⚛️ Гороскоп на Сегодня | {get_bot_username()}</a>"
 
-		# 3. Редактируем старое сообщение
 		edited_text = f"Вы выбрали: <b>{sign_name}</b> на <b>{period_ru.capitalize()}</b>."
 		
 		try:
@@ -579,13 +563,11 @@ def handle_horo_callback(call):
 				message_id=call.message.message_id,
 				text=edited_text,
 				parse_mode="html",
-				reply_markup=None # Удаляем клавиатуру
+				reply_markup=None
 			)
 		except Exception as e:
-			# Игнорируем ошибку, если сообщение не требует редактирования (например, если нет изменений)
 			print(f"Failed to edit message text/remove keyboard: {e}") 
 
-		# 4. Отправляем НОВОЕ сообщение с гороскопом
 		text_response = f"<b>{title_with_emoji}</b>\n\n{content}"
 		bot.send_message(
 			chat_id=call.message.chat.id,
@@ -615,15 +597,13 @@ def handle_group(message):
 		bot.reply_to(message, f"Пример: @{get_bot_username()} Рак сегодня")
 		return
 
-	# Разделяем на знак и период
 	words = text.split()
 	if len(words) < 1:
 		return
 
-	sign_name = words[0]  # ожидаем "рак"
+	sign_name = words[0]
 	period_name = words[1] if len(words) > 1 else 'сегодня'
 
-	# ищем ключ знака
 	sign_key = next((k for k,v in ZODIAC_SIGNS.items() if v.lower().endswith(sign_name)), None)
 	period_key = PERIOD_MAP.get(period_name, 'today')
 

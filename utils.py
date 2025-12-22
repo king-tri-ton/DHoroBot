@@ -1,5 +1,5 @@
 from config import BOT_LINK
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 import html
 import re
 
@@ -19,14 +19,24 @@ MONTHS_RU = {
     12: "декабрь",
 }
 
-def is_valid_birthdate(date):
-	"""
-	Проверяет формат даты рождения:
-	ДЕНЬ.МЕСЯЦ.ГОД без ведущих нулей.
-	Примеры валидных: 3.5.1999, 5.12.1998
-	"""
-	pattern = r'^(?:[1-9]|[12][0-9]|3[01])\.(?:[1-9]|1[0-2])\.[0-9]{4}$'
-	return bool(re.match(pattern, date.strip()))
+def is_valid_birthdate(value: str) -> bool:
+    value = value.strip()
+
+    if not re.fullmatch(r'(?:[1-9]|[12][0-9]|3[01])\.(?:[1-9]|1[0-2])\.(?:19\d{2}|20\d{2})', value):
+        return False
+
+    day, month, year = map(int, value.split('.'))
+
+    try:
+        birth = date(year, month, day)
+    except ValueError:
+        return False
+
+    today = date.today()
+
+    age = today.year - birth.year - ((today.month, today.day) < (birth.month, birth.day))
+    return 5 <= age <= 100
+
 
 
 def get_bot_username():

@@ -31,8 +31,7 @@ def init_db():
 				tgid INTEGER UNIQUE
 			);
 		""")
-		
-		# Проверяем и добавляем колонки
+
 		cur.execute("PRAGMA table_info(users);")
 		user_columns = [col[1] for col in cur.fetchall()]
 		
@@ -42,8 +41,7 @@ def init_db():
 			cur.execute("ALTER TABLE users ADD COLUMN birthdate TEXT;")
 		if 'registered_at' not in user_columns:
 			cur.execute("ALTER TABLE users ADD COLUMN registered_at TEXT;")
-		
-		# !!! НОВАЯ КОЛОНКА ДЛЯ БАЛАНСА !!!
+
 		if 'balance' not in user_columns:
 			cur.execute("ALTER TABLE users ADD COLUMN balance INTEGER DEFAULT 0;")
 
@@ -85,7 +83,7 @@ def init_db():
 			);
 		""")
 		
-		# --- PAYMENTS (Таблица для истории платежей - полезно иметь) ---
+		# --- PAYMENTS ---
 		cur.execute("""
 			CREATE TABLE IF NOT EXISTS payments (
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -111,7 +109,7 @@ init_db()
 
 def tgidregister(tid, name=None):
 	"""Регистрация пользователя"""
-	with get_db() as conn:  # ← используем with get_db()
+	with get_db() as conn:
 		cur = conn.cursor()
 		now = datetime.utcnow() + timedelta(hours=UTC)
 		cur.execute("""
@@ -127,10 +125,10 @@ def tgidregister(tid, name=None):
 
 def countusers():
 	"""Для админа"""
-	with get_db() as conn:  # ← используем with get_db()
+	with get_db() as conn:
 		cur = conn.cursor()
 		cur.execute("SELECT COUNT(*) FROM users;")
-		return cur.fetchone()[0]  # возвращаем int
+		return cur.fetchone()[0]
 
 
 
@@ -138,7 +136,7 @@ def countusers():
 # ==================== ФУНКЦИИ РЕГИСТРАЦИИ ГРУПП ====================
 
 def register_group(chat_id, chat_type, title=None, username=None):
-	with get_db() as conn:  # ← используем with get_db()
+	with get_db() as conn:
 		cur = conn.cursor()
 		now = datetime.utcnow() + timedelta(hours=UTC)
 		cur.execute("""
@@ -148,10 +146,10 @@ def register_group(chat_id, chat_type, title=None, username=None):
 		""", (chat_id, chat_type, title, username, now.isoformat()))
 
 def countgroups():
-	with get_db() as conn:  # ← используем with get_db()
+	with get_db() as conn:
 		cur = conn.cursor()
 		cur.execute("SELECT COUNT(*) FROM groups;")
-		return cur.fetchone()[0]  # возвращаем int
+		return cur.fetchone()[0]
 
 
 
@@ -160,14 +158,14 @@ def countgroups():
 
 def get_name(tgid):
 	"""Получить имя пользователя"""
-	with get_db() as conn:  # ← используем with get_db()
+	with get_db() as conn:
 		cur = conn.cursor()
 		cur.execute("SELECT name FROM users WHERE tgid = ?;", (tgid,))
 		row = cur.fetchone()
 		return row[0] if row else None
 
 def set_name(tgid, name):
-	with get_db() as conn:  # ← используем with get_db()
+	with get_db() as conn:
 		cur = conn.cursor()
 		cur.execute("UPDATE users SET name = ? WHERE tgid = ?;", (name, tgid))
 
@@ -175,14 +173,14 @@ def set_name(tgid, name):
 # ==================== ФУНКЦИИ ДЛЯ ДАТЫ РОЖДЕНИЯ ====================
 
 def get_birthdate(tgid):
-	with get_db() as conn:  # ← используем with get_db()
+	with get_db() as conn:
 		cur = conn.cursor()
 		cur.execute("SELECT birthdate FROM users WHERE tgid = ?;", (tgid,))
 		row = cur.fetchone()
 		return row[0] if row else None
 
 def set_birthdate(tgid, date):
-	with get_db() as conn:  # ← используем with get_db()
+	with get_db() as conn:
 		cur = conn.cursor()
 		cur.execute("UPDATE users SET birthdate = ? WHERE tgid = ?;", (date, tgid))
 
@@ -192,12 +190,12 @@ def set_birthdate(tgid, date):
 
 def set_chat_link(link):
 	"""Для админа"""
-	with get_db() as conn:  # ← используем with get_db()
+	with get_db() as conn:
 		cur = conn.cursor()
 		cur.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('chat_link', ?);", (link,))
 
 def get_chat_link():
-	with get_db() as conn:  # ← используем with get_db()
+	with get_db() as conn:
 		cur = conn.cursor()
 		cur.execute("SELECT value FROM settings WHERE key = 'chat_link';")
 		row = cur.fetchone()
@@ -214,7 +212,6 @@ def get_user_balance(tgid):
 		cur = conn.cursor()
 		cur.execute("SELECT balance FROM users WHERE tgid = ?;", (tgid,))
 		row = cur.fetchone()
-		# Если balance NULL (для старых юзеров), вернем 0
 		return row[0] if row and row[0] is not None else 0
 
 def update_user_balance(tgid, amount):
@@ -225,7 +222,6 @@ def update_user_balance(tgid, amount):
 	"""
 	with get_db() as conn:
 		cur = conn.cursor()
-		# COALESCE превращает NULL в 0, если поле было пустым
 		cur.execute("""
 			UPDATE users 
 			SET balance = COALESCE(balance, 0) + ? 
@@ -252,7 +248,7 @@ def add_personal_horoscope(tgid, period_key, horoscope_text):
 			INSERT INTO personal_horoscopes (tgid, period_key, horoscope_text)
 			VALUES (?, ?, ?)
 		""", (tgid, period_key, horoscope_text))
-		return cur.lastrowid  # возвращаем id записи
+		return cur.lastrowid
 
 def get_personal_horoscope(horoscope_id):
 	"""Получаем гороскоп по id"""
@@ -290,8 +286,7 @@ def check_free_horoscope_today(tgid):
 	"""
 	with get_db() as conn:
 		cur = conn.cursor()
-		
-		# Получаем текущее время по UTC + ваша зона для сравнения
+
 		now = datetime.utcnow() + timedelta(hours=UTC)
 		yesterday = (now - timedelta(days=1)).isoformat()
 		
@@ -301,4 +296,4 @@ def check_free_horoscope_today(tgid):
 		""", (tgid, yesterday))
 		
 		count = cur.fetchone()[0]
-		return count > 0 # Если count > 0, значит, уже получал
+		return count > 0
